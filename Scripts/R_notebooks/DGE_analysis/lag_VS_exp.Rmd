@@ -1,0 +1,160 @@
+---
+title: "lag VS exp"
+output: html_notebook
+---
+
+
+```{r}
+library(tximport)
+library(dplyr)
+library(DESeq2)
+library(data.table) 
+library(ggplot2)
+options(bitmapType='cairo')
+```
+
+```{r}
+library(pheatmap)
+library(RColorBrewer)
+```
+
+```{r}
+dir <- "/scratch/okhtienk/metatrans/Salmon_sum/"
+samples <- read.table(file.path(dir, "samples.txt"), header = TRUE)
+
+samples <- samples[(samples$phase == 'exp' & samples$treat == 'x') | (samples$phase == 'lag' & samples$treat == 'x'), ] # select samples
+files <- file.path(dir, samples$run, "quant.sf")
+names(files) <- samples$Sample_name
+id_2_genes_map <- read.csv2("/scratch/okhtienk/egg_gene_names.tsv", header = T, sep = "\t")
+txi <- tximport(files, type="salmon", tx2gene=id_2_genes_map)
+```
+
+```{r}
+dds <- DESeqDataSetFromTximport(txi, samples, ~phase)
+```
+```{r}
+nrow(dds)
+keep <-rowSums(counts(dds)<10)<ncol(counts(dds))*0.9
+dds <- dds[keep,]
+nrow(dds)
+```
+
+```{r}
+vsd <- vst(dds, blind = FALSE)
+rld <- rlog(dds, blind = FALSE)
+```
+
+```{r}
+dds <- estimateSizeFactors(dds)
+
+df <- bind_rows(
+  as_data_frame(log2(counts(dds, normalized=TRUE)[, 1:2]+1)) %>%
+         mutate(transformation = "log2(x + 1)"),
+  as_data_frame(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"),
+  as_data_frame(assay(rld)[, 1:2]) %>% mutate(transformation = "rlog"))
+  
+colnames(df)[1:2] <- c("x", "y")  
+
+lvls <- c("log2(x + 1)", "vst", "rlog")
+df$transformation <- factor(df$transformation, levels=lvls)
+ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 80) + coord_fixed() + facet_grid( . ~ transformation)
+```
+
+
+```{r}
+sampleDists <- dist(t(assay(rld)))
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <- paste( rld$phase )
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+```
+
+```{r}
+plotPCA(rld, intgroup = c("phase"))
+```
+
+```{r}
+library(apeglm)
+```
+
+```{r}
+dds <- DESeq(dds)
+```
+
+```{r}
+resultsNames(dds)
+```
+```{r}
+res <- lfcShrink(dds, coef="phase_lag_vs_exp", type="apeglm")
+```
+```{r}
+plotMA(res)
+```
+
+
+```{r}
+library(ggrepel)
+#BiocManager::install("EnhancedVolcano")
+library(EnhancedVolcano)
+```
+
+```{r}
+res.df <- as.data.frame(res)
+head(res.df)
+```
+```{r}
+filt.df <- filter(res.df, pvalue < 0.0001, abs(log2FoldChange) > 3)
+
+EnhancedVolcano(res.df, 
+    lab = rownames(res.df),
+    selectLab = rownames(filt.df), 
+    x = 'log2FoldChange', 
+    y = 'padj',  
+    title = 'Lag VS exponentional growth phase', 
+    subtitle = 'B.uniformis', 
+    pCutoff = 0.01,  
+    FCcutoff = 2.5,
+    labSize = 3)
+```
+```{r}
+ggsave('/scratch/okhtienk/lag_vs_exp_Volcano_plot.pdf', height = 10, width = 10)
+```
+
+```{r}
+dds <- estimateSizeFactors(dds)
+normalized_counts <- counts(dds, normalized=T) %>% data.frame() %>% rownames_to_column(var="gene")
+norm_sig <- normalized_counts %>% dplyr::filter(gene %in% rownames(res.df))
+```
+
+```{r}
+library("genefilter")
+
+topVarGenes <- head(order(rowVars(assay(rld)), decreasing = TRUE), 30)
+mat  <- assay(rld)[ topVarGenes, ]
+mat  <- mat - rowMeans(mat)
+anno <- as.data.frame(colData(vsd)[, c('phase', 'treat')])
+pdf(file='/scratch/okhtienk/lag_vs_exp_complex_heatmap.pdf')
+pheatmap(mat, annotation_col = anno)
+dev.off()
+```
+
+```{r}
+pheatmap(mat, annotation_col = anno)
+```
+
+```{r}
+resOrdered <- res[order(res$pvalue),]
+res_df <- as.data.frame(resOrdered)
+write.csv(res_df, file = "/scratch/okhtienk/lag_vs_exp_DEG_results.csv")
+```
+
+
+
+
+
+
+

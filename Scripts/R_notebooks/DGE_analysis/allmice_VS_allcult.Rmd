@@ -1,0 +1,357 @@
+---
+title: "All culture VS all cecum"
+output: html_notebook
+---
+
+
+```{r}
+library(tximport)
+library(dplyr)
+library(DESeq2)
+library(data.table) 
+library(ggplot2)
+options(bitmapType='cairo')
+```
+
+```{r}
+library(pheatmap)
+library(RColorBrewer)
+```
+
+```{r}
+dir <- "/scratch/okhtienk/metatrans/Salmon_sum/"
+samples <- read.table(file.path(dir, "samples.txt"), header = TRUE)
+
+samples <- samples[(samples$phase != 'x' & samples$treat != 'met') | (samples$community =='mono' | samples$community =='eight'), ] # select samples
+files <- file.path(dir, samples$run, "quant.sf")
+names(files) <- samples$Sample_name
+id_2_genes_map <- read.csv2("/scratch/okhtienk/egg_gene_names.tsv", header = T, sep = "\t")
+txi <- tximport(files, type="salmon", tx2gene=id_2_genes_map)
+```
+
+```{r}
+dds <- DESeqDataSetFromTximport(txi, samples, ~cultivation)
+```
+```{r}
+nrow(dds)
+keep <-rowSums(counts(dds)<10)<ncol(counts(dds))*0.9
+dds <- dds[keep,]
+nrow(dds)
+```
+
+```{r}
+vsd <- vst(dds, blind = FALSE)
+rld <- rlog(dds, blind = FALSE)
+```
+
+```{r}
+dds <- estimateSizeFactors(dds)
+
+df <- bind_rows(
+  as_data_frame(log2(counts(dds, normalized=TRUE)[, 1:2]+1)) %>%
+         mutate(transformation = "log2(x + 1)"),
+  as_data_frame(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"),
+  as_data_frame(assay(rld)[, 1:2]) %>% mutate(transformation = "rlog"))
+  
+colnames(df)[1:2] <- c("x", "y")  
+
+lvls <- c("log2(x + 1)", "vst", "rlog")
+df$transformation <- factor(df$transformation, levels=lvls)
+ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 80) + coord_fixed() + facet_grid( . ~ transformation)
+```
+
+
+```{r}
+sampleDists <- dist(t(assay(rld)))
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <- paste( rld$cultivation )
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+```
+
+```{r}
+plotPCA(rld, intgroup = c("cultivation"))
+```
+
+```{r}
+library(apeglm)
+```
+
+```{r}
+dds <- DESeq(dds)
+```
+
+```{r}
+resultsNames(dds)
+```
+```{r}
+res <- lfcShrink(dds, coef="cultivation_mouse_vs_cult", type="apeglm")
+```
+```{r}
+plotMA(res)
+```
+
+
+```{r}
+library(ggrepel)
+#BiocManager::install("EnhancedVolcano")
+library(EnhancedVolcano)
+```
+
+```{r}
+res.df <- as.data.frame(res)
+head(res.df)
+```
+```{r}
+filt.df <- filter(res.df, pvalue < 0.0001, abs(log2FoldChange) > 3)
+
+EnhancedVolcano(res.df, 
+    lab = rownames(res.df),
+    selectLab = rownames(filt.df), 
+    x = 'log2FoldChange', 
+    y = 'padj',  
+    title = 'Mouse cecum VS culture', 
+    subtitle = 'B.uniformis', 
+    pCutoff = 0.01,  
+    FCcutoff = 2.5,
+    labSize = 3)
+```
+```{r}
+ggsave('/scratch/okhtienk/allmiceVScult_Volcano_plot.pdf', height = 10, width = 10)
+```
+
+```{r}
+dds <- estimateSizeFactors(dds)
+normalized_counts <- counts(dds, normalized=T) %>% data.frame() %>% rownames_to_column(var="gene")
+norm_sig <- normalized_counts %>% dplyr::filter(gene %in% rownames(res.df))
+```
+
+```{r}
+library("genefilter")
+
+topVarGenes <- head(order(rowVars(assay(rld)), decreasing = TRUE), 30)
+mat  <- assay(rld)[ topVarGenes, ]
+mat  <- mat - rowMeans(mat)
+anno <- as.data.frame(colData(vsd)[, c('cultivation', 'community')])
+pdf(file='/scratch/okhtienk/allmiceVScult_complex_heatmap.pdf')
+pheatmap(mat, annotation_col = anno)
+dev.off()
+```
+
+```{r}
+pheatmap(mat, annotation_col = anno)
+```
+```{r}
+gomap1 <- read.table('/scratch/okhtienk/gomap_gene.tsv', header = TRUE, fill=TRUE)
+go_names1 <- read.csv('/scratch/okhtienk/gomap_go_names.csv', header = TRUE, fill=TRUE)
+gomap <- data.frame (GO=gomap1$go, Gene=gomap1$Gene)
+go_names <- data.frame (GO=go_names1$go, Name=go_names1$Name)
+```
+
+```{r}
+res_tb <- res %>% data.frame() %>% rownames_to_column(var="Gene") %>% as_tibble()
+sig <- res_tb%>%dplyr::filter(padj < 0.05 & abs(log2FoldChange) >= 1.5)
+sig_up <- sig[sig$log2FoldChange>0,]
+```
+
+```{r}
+enrich_up <- enricher(
+  gene=sig_up$Gene,
+  pvalueCutoff = 0.05,
+  pAdjustMethod = "BH",
+  universe=res_tb$Gene,
+  minGSSize = 2,
+  maxGSSize = 500,
+  TERM2GENE = gomap,
+  TERM2NAME = go_names
+)
+```
+
+```{r}
+summary(enrich_up)
+```
+```{r}
+dotplot(enrich_up, font.size=10, showCategory = 20)
+```
+```{r}
+sig_down <- sig[sig$log2FoldChange<0,]
+enrich_down <- enricher(
+  gene=sig_down$Gene,
+  pvalueCutoff = 0.05,
+  pAdjustMethod = "BH",
+  universe=res_tb$Gene,
+  minGSSize = 2,
+  maxGSSize = 500,
+  TERM2GENE = gomap,
+  TERM2NAME = go_names
+)
+```
+
+```{r}
+dotplot(enrich_down, font.size=10, showCategory = 20)
+```
+```{r}
+resOrdered <- res[order(res$pvalue),]
+res_df <- as.data.frame(resOrdered)
+write.csv(res_df, file = "/scratch/okhtienk/allmiceVScult_DEG_results.csv")
+```
+
+
+----------------------------------------------
+
+```{r}
+DEG_results <-  read.csv("/scratch/okhtienk/allmiceVScult_DEG_results.csv", header = TRUE, fill=TRUE)
+colnames(DEG_results) <- c("Gene","baseMean","log2FoldChange","lfcSE","pvalue","padj")
+go_genes <- read.table('/scratch/okhtienk/gomap_gene.tsv', header = TRUE, fill=TRUE)
+go_names <- read.csv('/scratch/okhtienk/gomap_go_names.csv', header = TRUE, fill=TRUE)
+```
+
+
+```{r}
+deg <- DEG_results[(DEG_results$padj<0.05) & (DEG_results$log2FoldChange > 1.5), ] # up-regulated genes
+N <- dim(deg)[1]
+go_int <- left_join(deg, go_genes, by = 'Gene')
+
+go_int <- go_int%>% drop_na
+x <- unique(go_int$go)
+generatio_dict <- data.frame(go = c('GO'),
+                  M_number = c(1.8))
+for(go_term in x) {
+  M <- sum(go_int$go == go_term)
+  new_row = c(go = go_term, M_number = M)
+  generatio_dict = rbind(generatio_dict,new_row)
+}
+generatio_dict <- generatio_dict[-1,]
+rownames(generatio_dict) <- 1:nrow(generatio_dict)
+
+n <- dim(DEG_results)[1]
+go_all <- left_join(DEG_results, go_genes, by = 'Gene')
+go_all <- go_all%>% drop_na
+bgratio_dict <- data.frame(go = c('GO'),
+                  k_number = c(1.8))
+for(go_term in x) {
+  k <- sum(go_all$go == go_term)
+  new_row = c(go = go_term, k_number = k)
+  bgratio_dict = rbind(bgratio_dict,new_row)
+}
+bgratio_dict <- bgratio_dict[-1,]
+rownames(bgratio_dict) <- 1:nrow(bgratio_dict)
+
+df <- merge(generatio_dict, bgratio_dict, by='go')
+rownames(df) <- df$go
+df <- subset(df, select=-c(go))
+
+df <- mutate_all(df, function(x) as.numeric(as.character(x)))
+M <- df$M_number
+k <- df$k_number
+args.df <- data.frame(numWdrawn=M-1, ## White balls drawn
+                      numW=k,        ## White balls
+                      numB=n-k,      ## Black balls
+                      numDrawn=N)    ## balls drawn
+
+## calculate pvalues based on hypergeometric model
+pvalues <- apply(args.df, 1, function(n)
+                 phyper(n[1], n[2], n[3], n[4], lower.tail=FALSE))
+## gene ratio and background ratio
+GeneRatio <- apply(data.frame(a=M, b=N), 1, function(x)
+                   paste(x[1], "/", x[2], sep="", collapse="")
+                   )
+BgRatio <- apply(data.frame(a=k, b=n), 1, function(x)
+                 paste(x[1], "/", x[2], sep="", collapse="")
+                 )
+Over <- data.frame(go = rownames(df),
+                   GeneRatio = GeneRatio,
+                   BgRatio = BgRatio,
+                   pvalue = pvalues)
+
+p.adj <- p.adjust(Over$pvalue, method="BH")
+Over <- data.frame(Over,
+                   p.adjust = p.adj)
+
+Over_annot <- left_join(Over, go_names, by = 'go')
+
+Over_annot[Over_annot$p.adjust<0.05,]
+```
+```{r}
+deg <- DEG_results[(DEG_results$padj<0.05) & (DEG_results$log2FoldChange < -1.5), ] # down-regulated genes
+N <- dim(deg)[1]
+go_int <- left_join(deg, go_genes, by = 'Gene')
+
+go_int <- go_int%>% drop_na
+x <- unique(go_int$go)
+generatio_dict <- data.frame(go = c('GO'),
+                  M_number = c(1.8))
+for(go_term in x) {
+  M <- sum(go_int$go == go_term)
+  new_row = c(go = go_term, M_number = M)
+  generatio_dict = rbind(generatio_dict,new_row)
+}
+generatio_dict <- generatio_dict[-1,]
+rownames(generatio_dict) <- 1:nrow(generatio_dict)
+
+n <- dim(DEG_results)[1]
+go_all <- left_join(DEG_results, go_genes, by = 'Gene')
+go_all <- go_all%>% drop_na
+bgratio_dict <- data.frame(go = c('GO'),
+                  k_number = c(1.8))
+for(go_term in x) {
+  k <- sum(go_all$go == go_term)
+  new_row = c(go = go_term, k_number = k)
+  bgratio_dict = rbind(bgratio_dict,new_row)
+}
+bgratio_dict <- bgratio_dict[-1,]
+rownames(bgratio_dict) <- 1:nrow(bgratio_dict)
+
+df <- merge(generatio_dict, bgratio_dict, by='go')
+rownames(df) <- df$go
+df <- subset(df, select=-c(go))
+
+df <- mutate_all(df, function(x) as.numeric(as.character(x)))
+M <- df$M_number
+k <- df$k_number
+args.df <- data.frame(numWdrawn=M-1, ## White balls drawn
+                      numW=k,        ## White balls
+                      numB=n-k,      ## Black balls
+                      numDrawn=N)    ## balls drawn
+
+## calculate pvalues based on hypergeometric model
+pvalues <- apply(args.df, 1, function(n)
+                 phyper(n[1], n[2], n[3], n[4], lower.tail=FALSE))
+## gene ratio and background ratio
+GeneRatio <- apply(data.frame(a=M, b=N), 1, function(x)
+                   paste(x[1], "/", x[2], sep="", collapse="")
+                   )
+BgRatio <- apply(data.frame(a=k, b=n), 1, function(x)
+                 paste(x[1], "/", x[2], sep="", collapse="")
+                 )
+Over <- data.frame(go = rownames(df),
+                   GeneRatio = GeneRatio,
+                   BgRatio = BgRatio,
+                   pvalue = pvalues)
+
+p.adj <- p.adjust(Over$pvalue, method="BH")
+Over <- data.frame(Over,
+                   p.adjust = p.adj)
+
+Over_annot <- left_join(Over, go_names, by = 'go')
+
+Over_annot[Over_annot$p.adjust<0.05,]
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+

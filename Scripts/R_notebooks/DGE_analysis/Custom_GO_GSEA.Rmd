@@ -1,0 +1,451 @@
+---
+title: "Custom GO function"
+output: html_notebook
+---
+
+#Custom GO enrichment analysis
+```{r}
+library(dplyr)
+library(readr)
+library(tidyverse)
+library(stats)
+library(clusterProfiler)
+```
+
+#Met VS DMSO
+
+```{r}
+DEG_results <-  read.csv("/scratch/okhtienk/DEG_data/metVSdmso_DEG_results.csv", header = TRUE, fill=TRUE)
+colnames(DEG_results) <- c("Gene","baseMean","log2FoldChange","lfcSE","pvalue","padj")
+go_genes <- read.table('/scratch/okhtienk/gomap_gene.tsv', header = TRUE, fill=TRUE)
+go_names <- read.csv('/scratch/okhtienk/gomap_go_names.csv', header = TRUE, fill=TRUE)
+```
+
+```{r}
+# GeneRatio was calculated as M/N, where M is a number of genes of interest (DE) that are in the GO set, N is a number of genes of interest
+
+#deg <- DEG_results[(DEG_results$padj<0.01) & (abs(DEG_results$log2FoldChange) > 2.5), ] 
+deg <- DEG_results[(DEG_results$padj<0.01) & (DEG_results$log2FoldChange > 2.5), ] # up-regulated genes
+N <- dim(deg)[1]
+go_int <- left_join(deg, go_genes, by = 'Gene')
+```
+
+```{r}
+go_int <- go_int%>% drop_na
+x <- unique(go_int$go)
+generatio_dict <- data.frame(go = c('GO'),
+                  M_number = c(1.8))
+for(go_term in x) {
+  M <- sum(go_int$go == go_term)
+  new_row = c(go = go_term, M_number = M)
+  generatio_dict = rbind(generatio_dict,new_row)
+}
+generatio_dict <- generatio_dict[-1,]
+rownames(generatio_dict) <- 1:nrow(generatio_dict)
+```
+
+```{r}
+# BgRatio was calculated as k/n, where k is a number of genes in the universe that are in the GO set, n is a number of genes in the universe
+n <- dim(DEG_results)[1]
+go_all <- left_join(DEG_results, go_genes, by = 'Gene')
+go_all <- go_all%>% drop_na
+bgratio_dict <- data.frame(go = c('GO'),
+                  k_number = c(1.8))
+for(go_term in x) {
+  k <- sum(go_all$go == go_term)
+  new_row = c(go = go_term, k_number = k)
+  bgratio_dict = rbind(bgratio_dict,new_row)
+}
+bgratio_dict <- bgratio_dict[-1,]
+rownames(bgratio_dict) <- 1:nrow(bgratio_dict)
+```
+
+```{r}
+df <- merge(generatio_dict, bgratio_dict, by='go')
+rownames(df) <- df$go
+df <- subset(df, select=-c(go))
+```
+
+```{r}
+df <- mutate_all(df, function(x) as.numeric(as.character(x)))
+M <- df$M_number
+k <- df$k_number
+args.df <- data.frame(numWdrawn=M-1, ## White balls drawn
+                      numW=k,        ## White balls
+                      numB=n-k,      ## Black balls
+                      numDrawn=N)    ## balls drawn
+
+## calculate pvalues based on hypergeometric model
+pvalues <- apply(args.df, 1, function(n)
+                 phyper(n[1], n[2], n[3], n[4], lower.tail=FALSE))
+## gene ratio and background ratio
+GeneRatio <- apply(data.frame(a=M, b=N), 1, function(x)
+                   paste(x[1], "/", x[2], sep="", collapse="")
+                   )
+BgRatio <- apply(data.frame(a=k, b=n), 1, function(x)
+                 paste(x[1], "/", x[2], sep="", collapse="")
+                 )
+Over <- data.frame(go = rownames(df),
+                   GeneRatio = GeneRatio,
+                   BgRatio = BgRatio,
+                   pvalue = pvalues)
+```
+
+```{r}
+p.adj <- p.adjust(Over$pvalue, method="BH")
+Over <- data.frame(Over,
+                   p.adjust = p.adj)
+```
+
+```{r}
+Over_annot <- left_join(Over, go_names, by = 'go')
+```
+
+```{r}
+Over_annot[Over_annot$p.adjust<0.05,]
+```
+
+```{r}
+deg <- DEG_results[(DEG_results$padj<0.01) & (DEG_results$log2FoldChange < -1.5), ] # down-regulated genes
+N <- dim(deg)[1]
+go_int <- left_join(deg, go_genes, by = 'Gene')
+
+go_int <- go_int%>% drop_na
+x <- unique(go_int$go)
+generatio_dict <- data.frame(go = c('GO'),
+                  M_number = c(1.8))
+for(go_term in x) {
+  M <- sum(go_int$go == go_term)
+  new_row = c(go = go_term, M_number = M)
+  generatio_dict = rbind(generatio_dict,new_row)
+}
+generatio_dict <- generatio_dict[-1,]
+rownames(generatio_dict) <- 1:nrow(generatio_dict)
+
+n <- dim(DEG_results)[1]
+go_all <- left_join(DEG_results, go_genes, by = 'Gene')
+go_all <- go_all%>% drop_na
+bgratio_dict <- data.frame(go = c('GO'),
+                  k_number = c(1.8))
+for(go_term in x) {
+  k <- sum(go_all$go == go_term)
+  new_row = c(go = go_term, k_number = k)
+  bgratio_dict = rbind(bgratio_dict,new_row)
+}
+bgratio_dict <- bgratio_dict[-1,]
+rownames(bgratio_dict) <- 1:nrow(bgratio_dict)
+
+df <- merge(generatio_dict, bgratio_dict, by='go')
+rownames(df) <- df$go
+df <- subset(df, select=-c(go))
+
+df <- mutate_all(df, function(x) as.numeric(as.character(x)))
+M <- df$M_number
+k <- df$k_number
+args.df <- data.frame(numWdrawn=M-1, ## White balls drawn
+                      numW=k,        ## White balls
+                      numB=n-k,      ## Black balls
+                      numDrawn=N)    ## balls drawn
+
+## calculate pvalues based on hypergeometric model
+pvalues <- apply(args.df, 1, function(n)
+                 phyper(n[1], n[2], n[3], n[4], lower.tail=FALSE))
+## gene ratio and background ratio
+GeneRatio <- apply(data.frame(a=M, b=N), 1, function(x)
+                   paste(x[1], "/", x[2], sep="", collapse="")
+                   )
+BgRatio <- apply(data.frame(a=k, b=n), 1, function(x)
+                 paste(x[1], "/", x[2], sep="", collapse="")
+                 )
+Over <- data.frame(go = rownames(df),
+                   GeneRatio = GeneRatio,
+                   BgRatio = BgRatio,
+                   pvalue = pvalues)
+
+p.adj <- p.adjust(Over$pvalue, method="BH")
+Over <- data.frame(Over,
+                   p.adjust = p.adj)
+
+Over_annot <- left_join(Over, go_names, by = 'go')
+
+Over_annot[Over_annot$p.adjust<0.05,]
+```
+#mono VS eight
+
+```{r}
+DEG_results <-  read.csv("/scratch/okhtienk/DEG_data/monoVseight_DEG_results.csv", header = TRUE, fill=TRUE)
+colnames(DEG_results) <- c("Gene","baseMean","log2FoldChange","lfcSE","pvalue","padj")
+go_genes <- read.table('/scratch/okhtienk/gomap_gene.tsv', header = TRUE, fill=TRUE)
+go_names <- read.csv('/scratch/okhtienk/gomap_go_names.csv', header = TRUE, fill=TRUE)
+```
+
+```{r}
+deg <- DEG_results[(DEG_results$padj<0.01) & (DEG_results$log2FoldChange > 1.5), ] # up-regulated genes
+N <- dim(deg)[1]
+go_int <- left_join(deg, go_genes, by = 'Gene')
+
+go_int <- go_int%>% drop_na
+x <- unique(go_int$go)
+generatio_dict <- data.frame(go = c('GO'),
+                  M_number = c(1.8))
+for(go_term in x) {
+  M <- sum(go_int$go == go_term)
+  new_row = c(go = go_term, M_number = M)
+  generatio_dict = rbind(generatio_dict,new_row)
+}
+generatio_dict <- generatio_dict[-1,]
+rownames(generatio_dict) <- 1:nrow(generatio_dict)
+
+n <- dim(DEG_results)[1]
+go_all <- left_join(DEG_results, go_genes, by = 'Gene')
+go_all <- go_all%>% drop_na
+bgratio_dict <- data.frame(go = c('GO'),
+                  k_number = c(1.8))
+for(go_term in x) {
+  k <- sum(go_all$go == go_term)
+  new_row = c(go = go_term, k_number = k)
+  bgratio_dict = rbind(bgratio_dict,new_row)
+}
+bgratio_dict <- bgratio_dict[-1,]
+rownames(bgratio_dict) <- 1:nrow(bgratio_dict)
+
+df <- merge(generatio_dict, bgratio_dict, by='go')
+rownames(df) <- df$go
+df <- subset(df, select=-c(go))
+
+df <- mutate_all(df, function(x) as.numeric(as.character(x)))
+M <- df$M_number
+k <- df$k_number
+args.df <- data.frame(numWdrawn=M-1, ## White balls drawn
+                      numW=k,        ## White balls
+                      numB=n-k,      ## Black balls
+                      numDrawn=N)    ## balls drawn
+
+## calculate pvalues based on hypergeometric model
+pvalues <- apply(args.df, 1, function(n)
+                 phyper(n[1], n[2], n[3], n[4], lower.tail=FALSE))
+## gene ratio and background ratio
+GeneRatio <- apply(data.frame(a=M, b=N), 1, function(x)
+                   paste(x[1], "/", x[2], sep="", collapse="")
+                   )
+BgRatio <- apply(data.frame(a=k, b=n), 1, function(x)
+                 paste(x[1], "/", x[2], sep="", collapse="")
+                 )
+Over <- data.frame(go = rownames(df),
+                   GeneRatio = GeneRatio,
+                   BgRatio = BgRatio,
+                   pvalue = pvalues)
+
+p.adj <- p.adjust(Over$pvalue, method="BH")
+Over <- data.frame(Over,
+                   p.adjust = p.adj)
+
+Over_annot <- left_join(Over, go_names, by = 'go')
+
+Over_annot[Over_annot$p.adjust<0.05,]
+```
+```{r}
+deg <- DEG_results[(DEG_results$padj<0.01) & (DEG_results$log2FoldChange < -1.5), ] # down-regulated genes
+N <- dim(deg)[1]
+go_int <- left_join(deg, go_genes, by = 'Gene')
+
+go_int <- go_int%>% drop_na
+x <- unique(go_int$go)
+generatio_dict <- data.frame(go = c('GO'),
+                  M_number = c(1.8))
+for(go_term in x) {
+  M <- sum(go_int$go == go_term)
+  new_row = c(go = go_term, M_number = M)
+  generatio_dict = rbind(generatio_dict,new_row)
+}
+generatio_dict <- generatio_dict[-1,]
+rownames(generatio_dict) <- 1:nrow(generatio_dict)
+
+n <- dim(DEG_results)[1]
+go_all <- left_join(DEG_results, go_genes, by = 'Gene')
+go_all <- go_all%>% drop_na
+bgratio_dict <- data.frame(go = c('GO'),
+                  k_number = c(1.8))
+for(go_term in x) {
+  k <- sum(go_all$go == go_term)
+  new_row = c(go = go_term, k_number = k)
+  bgratio_dict = rbind(bgratio_dict,new_row)
+}
+bgratio_dict <- bgratio_dict[-1,]
+rownames(bgratio_dict) <- 1:nrow(bgratio_dict)
+
+df <- merge(generatio_dict, bgratio_dict, by='go')
+rownames(df) <- df$go
+df <- subset(df, select=-c(go))
+
+df <- mutate_all(df, function(x) as.numeric(as.character(x)))
+M <- df$M_number
+k <- df$k_number
+args.df <- data.frame(numWdrawn=M-1, ## White balls drawn
+                      numW=k,        ## White balls
+                      numB=n-k,      ## Black balls
+                      numDrawn=N)    ## balls drawn
+
+## calculate pvalues based on hypergeometric model
+pvalues <- apply(args.df, 1, function(n)
+                 phyper(n[1], n[2], n[3], n[4], lower.tail=FALSE))
+## gene ratio and background ratio
+GeneRatio <- apply(data.frame(a=M, b=N), 1, function(x)
+                   paste(x[1], "/", x[2], sep="", collapse="")
+                   )
+BgRatio <- apply(data.frame(a=k, b=n), 1, function(x)
+                 paste(x[1], "/", x[2], sep="", collapse="")
+                 )
+Over <- data.frame(go = rownames(df),
+                   GeneRatio = GeneRatio,
+                   BgRatio = BgRatio,
+                   pvalue = pvalues)
+
+p.adj <- p.adjust(Over$pvalue, method="BH")
+Over <- data.frame(Over,
+                   p.adjust = p.adj)
+
+Over_annot <- left_join(Over, go_names, by = 'go')
+
+Over_annot[Over_annot$p.adjust<0.05,]
+```
+#Mono VS exp
+
+```{r}
+DEG_results <-  read.csv("/scratch/okhtienk/DEG_data/MonoVSculture_DEG_results.csv", header = TRUE, fill=TRUE)
+colnames(DEG_results) <- c("Gene","baseMean","log2FoldChange","lfcSE","pvalue","padj")
+go_genes <- read.table('/scratch/okhtienk/gomap_gene.tsv', header = TRUE, fill=TRUE)
+go_names <- read.csv('/scratch/okhtienk/gomap_go_names.csv', header = TRUE, fill=TRUE)
+```
+
+```{r}
+deg <- DEG_results[(DEG_results$padj<0.01) & (DEG_results$log2FoldChange > 1.5), ] # up-regulated genes
+N <- dim(deg)[1]
+go_int <- left_join(deg, go_genes, by = 'Gene')
+
+go_int <- go_int%>% drop_na
+x <- unique(go_int$go)
+generatio_dict <- data.frame(go = c('GO'),
+                  M_number = c(1.8))
+for(go_term in x) {
+  M <- sum(go_int$go == go_term)
+  new_row = c(go = go_term, M_number = M)
+  generatio_dict = rbind(generatio_dict,new_row)
+}
+generatio_dict <- generatio_dict[-1,]
+rownames(generatio_dict) <- 1:nrow(generatio_dict)
+
+n <- dim(DEG_results)[1]
+go_all <- left_join(DEG_results, go_genes, by = 'Gene')
+go_all <- go_all%>% drop_na
+bgratio_dict <- data.frame(go = c('GO'),
+                  k_number = c(1.8))
+for(go_term in x) {
+  k <- sum(go_all$go == go_term)
+  new_row = c(go = go_term, k_number = k)
+  bgratio_dict = rbind(bgratio_dict,new_row)
+}
+bgratio_dict <- bgratio_dict[-1,]
+rownames(bgratio_dict) <- 1:nrow(bgratio_dict)
+
+df <- merge(generatio_dict, bgratio_dict, by='go')
+rownames(df) <- df$go
+df <- subset(df, select=-c(go))
+
+df <- mutate_all(df, function(x) as.numeric(as.character(x)))
+M <- df$M_number
+k <- df$k_number
+args.df <- data.frame(numWdrawn=M-1, ## White balls drawn
+                      numW=k,        ## White balls
+                      numB=n-k,      ## Black balls
+                      numDrawn=N)    ## balls drawn
+
+## calculate pvalues based on hypergeometric model
+pvalues <- apply(args.df, 1, function(n)
+                 phyper(n[1], n[2], n[3], n[4], lower.tail=FALSE))
+## gene ratio and background ratio
+GeneRatio <- apply(data.frame(a=M, b=N), 1, function(x)
+                   paste(x[1], "/", x[2], sep="", collapse="")
+                   )
+BgRatio <- apply(data.frame(a=k, b=n), 1, function(x)
+                 paste(x[1], "/", x[2], sep="", collapse="")
+                 )
+Over <- data.frame(go = rownames(df),
+                   GeneRatio = GeneRatio,
+                   BgRatio = BgRatio,
+                   pvalue = pvalues)
+
+p.adj <- p.adjust(Over$pvalue, method="BH")
+Over <- data.frame(Over,
+                   p.adjust = p.adj)
+
+Over_annot <- left_join(Over, go_names, by = 'go')
+
+Over_annot[Over_annot$p.adjust<0.05,]
+```
+```{r}
+deg <- DEG_results[(DEG_results$padj<0.01) & (DEG_results$log2FoldChange < -1.5), ] 
+N <- dim(deg)[1]
+go_int <- left_join(deg, go_genes, by = 'Gene')
+
+go_int <- go_int%>% drop_na
+x <- unique(go_int$go)
+generatio_dict <- data.frame(go = c('GO'),
+                  M_number = c(1.8))
+for(go_term in x) {
+  M <- sum(go_int$go == go_term)
+  new_row = c(go = go_term, M_number = M)
+  generatio_dict = rbind(generatio_dict,new_row)
+}
+generatio_dict <- generatio_dict[-1,]
+rownames(generatio_dict) <- 1:nrow(generatio_dict)
+
+n <- dim(DEG_results)[1]
+go_all <- left_join(DEG_results, go_genes, by = 'Gene')
+go_all <- go_all%>% drop_na
+bgratio_dict <- data.frame(go = c('GO'),
+                  k_number = c(1.8))
+for(go_term in x) {
+  k <- sum(go_all$go == go_term)
+  new_row = c(go = go_term, k_number = k)
+  bgratio_dict = rbind(bgratio_dict,new_row)
+}
+bgratio_dict <- bgratio_dict[-1,]
+rownames(bgratio_dict) <- 1:nrow(bgratio_dict)
+
+df <- merge(generatio_dict, bgratio_dict, by='go')
+rownames(df) <- df$go
+df <- subset(df, select=-c(go))
+
+df <- mutate_all(df, function(x) as.numeric(as.character(x)))
+M <- df$M_number
+k <- df$k_number
+args.df <- data.frame(numWdrawn=M-1, ## White balls drawn
+                      numW=k,        ## White balls
+                      numB=n-k,      ## Black balls
+                      numDrawn=N)    ## balls drawn
+
+## calculate pvalues based on hypergeometric model
+pvalues <- apply(args.df, 1, function(n)
+                 phyper(n[1], n[2], n[3], n[4], lower.tail=FALSE))
+## gene ratio and background ratio
+GeneRatio <- apply(data.frame(a=M, b=N), 1, function(x)
+                   paste(x[1], "/", x[2], sep="", collapse="")
+                   )
+BgRatio <- apply(data.frame(a=k, b=n), 1, function(x)
+                 paste(x[1], "/", x[2], sep="", collapse="")
+                 )
+Over <- data.frame(go = rownames(df),
+                   GeneRatio = GeneRatio,
+                   BgRatio = BgRatio,
+                   pvalue = pvalues)
+
+p.adj <- p.adjust(Over$pvalue, method="BH")
+Over <- data.frame(Over,
+                   p.adjust = p.adj)
+
+Over_annot <- left_join(Over, go_names, by = 'go')
+
+Over_annot[Over_annot$p.adjust<0.05,]
+```
+

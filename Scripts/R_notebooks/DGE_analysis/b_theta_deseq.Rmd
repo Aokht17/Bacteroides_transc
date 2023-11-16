@@ -1,0 +1,390 @@
+---
+title: "Met_VS_DMSO_WT_b.theta_analysis"
+output: html_notebook
+---
+
+Summarizing Salmon output into 1 table. Assigning names to genes
+
+```{r}
+library(tximport)
+library(dplyr)
+library(DESeq2)
+library(data.table) 
+library(ggplot2)
+options(bitmapType='cairo')
+```
+
+```{r}
+dir <- "/scratch/okhtienk/Salmon_theta/quants"
+samples <- read.csv("/scratch/okhtienk/Salmon_theta/samples_theta.txt", header = TRUE)
+
+samples <- samples[samples$genotype == "WT", ] # select only WT
+files <- file.path(dir, samples$run, "quant.sf")
+names(files) <- samples$sample
+id_2_genes_map <- read.csv2("/scratch/okhtienk/gene_names_Lucia_2.tsv", header = T, sep = "\t")
+txi <- tximport(files, type="salmon", tx2gene=id_2_genes_map)
+```
+
+```{r}
+head(txi$counts)
+```
+
+```{r}
+dds <- DESeqDataSetFromTximport(txi, samples, ~treat)
+```
+```{r}
+nrow(dds)
+```
+
+Filtering
+
+```{r}
+keep <-rowSums(counts(dds)<10)<ncol(counts(dds))*0.9
+dds <- dds[keep,]
+nrow(dds)
+```
+
+Transformations
+
+```{r}
+vsd <- vst(dds, blind = FALSE)
+rld <- rlog(dds, blind = FALSE)
+```
+
+```{r}
+dds <- estimateSizeFactors(dds)
+
+df <- bind_rows(
+  as_data_frame(log2(counts(dds, normalized=TRUE)[, 1:2]+1)) %>%
+         mutate(transformation = "log2(x + 1)"),
+  as_data_frame(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"),
+  as_data_frame(assay(rld)[, 1:2]) %>% mutate(transformation = "rlog"))
+  
+colnames(df)[1:2] <- c("x", "y")  
+
+lvls <- c("log2(x + 1)", "vst", "rlog")
+df$transformation <- factor(df$transformation, levels=lvls)
+
+```
+
+```{r}
+ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 80) + coord_fixed() + facet_grid( . ~ transformation)
+```
+```{r}
+sampleDists <- dist(t(assay(rld)))
+```
+
+```{r}
+library("pheatmap")
+library("RColorBrewer")
+```
+
+```{r}
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <- paste( rld$treat )
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+```
+```{r}
+plotPCA(rld, intgroup = c("treat"))
+```
+
+```{r}
+pcaData <- plotPCA(rld, intgroup = c("treat"), returnData = TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+ggplot(pcaData, aes(x = PC1, y = PC2, color = treat)) +
+  geom_point(size =3) +
+  xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+  ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+  coord_fixed() +
+  ggtitle("PCA with RLD data")
+```
+```{r}
+ggsave('/scratch/okhtienk/B_THETA_PCA_plot.pdf', height = 8, width = 8)
+```
+
+DEG analysis
+```{r}
+#if (!require("BiocManager", quietly = TRUE))
+    #install.packages("BiocManager")
+
+#BiocManager::install("apeglm")
+library("apeglm")
+```
+
+
+```{r}
+dds <- DESeq(dds)
+```
+
+
+```{r}
+resultsNames(dds)
+```
+
+```{r}
+res <- lfcShrink(dds, coef="treat_met_vs_dmso", type="apeglm")
+```
+```{r}
+plotMA(res)
+```
+Without shrinking
+
+```{r}
+res.noshr <- results(dds, name="treat_met_vs_dmso")
+plotMA(res.noshr)
+```
+
+```{r}
+res.05 <- results(dds, alpha = 0.05)
+table(res.05$padj < 0.05)
+```
+```{r}
+summary(res)
+```
+Downregulated met vs dmso
+
+```{r}
+resSig <- subset(res, padj < 0.05)
+head(resSig[ order(resSig$log2FoldChange), ])
+```
+
+Up-regulated
+
+```{r}
+head(resSig[ order(resSig$log2FoldChange, decreasing = TRUE), ])
+```
+
+Volcano plot
+
+```{r}
+library(ggrepel)
+#BiocManager::install("EnhancedVolcano")
+library(EnhancedVolcano)
+```
+
+```{r}
+res.df <- as.data.frame(res)
+head(res.df)
+```
+
+```{r}
+filt.df <- filter(res.df, pvalue < 0.0001, abs(log2FoldChange) > 3)
+
+EnhancedVolcano(res.df, 
+    lab = rownames(res.df),
+    selectLab = rownames(filt.df), 
+    x = 'log2FoldChange', 
+    y = 'padj',  
+    title = 'Antibiotic VS DMSO', 
+    subtitle = 'Metronidazole treatment, B.theta', 
+    pCutoff = 0.01,  
+    FCcutoff = 2.5,
+    labSize = 3)
+```
+```{r}
+ggsave('/scratch/okhtienk/B_THETAmet_Volcano_plot.pdf', height = 10, width = 10)
+```
+
+Heatmap
+
+
+```{r}
+dds <- estimateSizeFactors(dds)
+normalized_counts <- counts(dds, normalized=T) %>% data.frame() %>% rownames_to_column(var="gene")
+norm_sig <- normalized_counts %>% dplyr::filter(gene %in% rownames(res.df))
+```
+
+
+```{r}
+library("genefilter")
+
+topVarGenes <- head(order(rowVars(assay(rld)), decreasing = TRUE), 30)
+mat  <- assay(rld)[ topVarGenes, ]
+mat  <- mat - rowMeans(mat)
+anno <- as.data.frame(colData(vsd)[, c('treat', 'genotype')])
+pdf(file='/scratch/okhtienk/B_THETA_complex_heatmap.pdf')
+pheatmap(mat, annotation_col = anno)
+dev.off()
+```
+```{r}
+pheatmap(mat, annotation_col = anno)
+```
+
+GO enrichment analysis
+
+```{r}
+#if (!require("BiocManager", quietly = TRUE))
+    #install.packages("BiocManager")
+
+#BiocManager::install("clusterProfiler")
+library(clusterProfiler)
+```
+```{r}
+library(AnnotationHub)
+```
+
+Have to use E.coli annotation to get ENTREZ ID
+
+```{r}
+hub <- AnnotationHub()
+query(hub, c("escherichia","orgdb"))
+```
+```{r}
+orgdb <- hub[["AH100405"]]
+orgdb
+```
+
+```{r}
+select(orgdb, head(keys(orgdb)), c("SYMBOL","ENTREZID"))
+```
+```{r}
+genedb2 <- as.data.frame(select(orgdb, keys(orgdb), c("SYMBOL","ENTREZID")))
+
+res_tb <- res %>% data.frame() %>% rownames_to_column(var="Gene") %>% as_tibble()
+```
+
+
+```{r}
+res_tb <- dplyr::filter(res_tb, !grepl("BT_", Gene))
+res_tb_id <- left_join(res_tb, genedb2, by=c('Gene'='SYMBOL'))
+
+sig <- res_tb_id %>%dplyr::filter(padj < 0.05 & abs(log2FoldChange) >= 1.5)
+```
+
+Let's select only up-regulated genes
+
+```{r}
+sig_up <- sig[sig$log2FoldChange>0,]
+ego_up <- enrichGO(gene = sig_up$ENTREZID, 
+                universe = res_tb_id$ENTREZID,  
+                keyType = "ENTREZID", 
+                OrgDb = orgdb,  
+                ont = "BP", 
+                pAdjustMethod = "BH",  
+                pvalueCutoff = 0.05)
+d.ego_up <- data.frame(ego_up)
+```
+
+```{r}
+library(enrichplot) 
+library(ggnewscale) 
+ 
+d <- godata(orgdb, ont="BP") 
+```
+
+```{r}
+ego.ps <- pairwise_termsim(ego_up, method="Wang", semData = d) 
+emapplot(ego.ps, showCategory = 20, cex_label_category=0.5, font.size=10)
+```
+```{r}
+ggsave('/scratch/okhtienk/B_THETA_metvsdmso_emapplot_up.pdf', height = 8, width = 8)
+```
+
+```{r}
+dotplot(ego_up, showCategory = 20, font.size=10)
+ggsave('/scratch/okhtienk/B_THETA_metvsdmso_dotplot_up.pdf', height = 8, width = 8)
+```
+Down-regulated genes 
+
+```{r}
+sig_down <- sig[sig$log2FoldChange<0,]
+ego_down <- enrichGO(gene = sig_down$ENTREZID, 
+                universe = res_tb_id$ENTREZID,  
+                keyType = "ENTREZID", 
+                OrgDb = orgdb,   
+                ont = "BP", 
+                pAdjustMethod = "BH",  
+                pvalueCutoff = 0.05)
+d.ego_down <- data.frame(ego_down)
+```
+
+```{r}
+ego.ps <- pairwise_termsim(ego_down, method="Wang", semData = d) 
+emapplot(ego.ps, showCategory = 20, cex_label_category=0.5, font.size=10)
+ggsave('/scratch/okhtienk/B_THETA_metvsdmso_emapplot_down.pdf', height = 8, width = 8)
+```
+```{r}
+dotplot(ego_down, showCategory = 20, font.size=10)
+ggsave('/scratch/okhtienk/B_THETA_metvsdmso_dotplot_down.pdf', height = 8, width = 8)
+```
+
+Saving the data
+
+```{r}
+resOrdered <- res[order(res$pvalue),]
+res_df <- as.data.frame(resOrdered)
+write.csv(res_df, file = "/scratch/okhtienk/B_THETA_metvsdmso_DEG_results.csv")
+```
+
+##GLM
+
+```{r}
+library(limma)
+library(edgeR)
+```
+
+```{r}
+dir <- "/scratch/okhtienk/Salmon_theta/quants"
+samples <- read.csv("/scratch/okhtienk/Salmon_theta/samples_theta.txt", header = TRUE)
+
+files <- file.path(dir, samples$run, "quant.sf")
+names(files) <- samples$sample
+id_2_genes_map <- read.csv2("/scratch/okhtienk/gene_names_Lucia.tsv", header = T, sep = "\t")
+txi <- tximport(files, type="salmon", tx2gene=id_2_genes_map)
+```
+
+```{r}
+y = DGEList(counts = txi$counts,lib.size = colSums(txi$counts),norm.factors = calcNormFactors(txi$counts),samples = samples,group = samples$genotype)
+```
+```{r}
+keep = filterByExpr(y)
+y = y[keep,]
+y = calcNormFactors(y)
+```
+```{r}
+design = model.matrix(~0+y$samples$genotype+y$samples$treat)
+```
+
+
+```{r}
+
+colnames(design) <- c("bothKO", "Lexa1KO", 'Lexa2KO', 'rpoSKO', 'WT', 'met')
+v = voom(y,design = design)
+fit <- lmFit(v, design)
+fit2 <- contrasts.fit(fit, makeContrasts(Lexa1KO_vs_WT = Lexa1KO-WT,Lexa2KO_vs_WT = Lexa2KO-WT, bothKO_vs_WT = bothKO-WT, rpoSKO_vs_WT = rpoSKO-WT, met_vs_dmso = met, levels=colnames(design)))
+fit2 <- eBayes(fit2, trend = T)
+de <- topTable(fit2, adjust.method="BH", number=Inf, sort.by = "F")
+
+head(de)
+```
+```{r}
+plotSA(fit2)
+```
+
+```{r}
+summary(decideTests(fit2))
+```
+
+```{r}
+voom.Results_Lexa1KO_vs_WT = topTable(fit2,coef = 1,adjust.method = "BH",number = nrow(y$counts))
+voom.Results_Lexa2KO_vs_WT = topTable(fit2,coef = 2,adjust.method = "BH",number = nrow(y$counts))
+voom.Results_bothKO_vs_WT = topTable(fit2,coef = 3,adjust.method = "BH",number = nrow(y$counts))
+voom.Results_rpoSKO_vs_WT = topTable(fit2,coef = 4,adjust.method = "BH",number = nrow(y$counts))
+voom.Results_met_vs_dmso = topTable(fit2,coef = 5,adjust.method = "BH",number = nrow(y$counts))
+```
+
+```{r}
+write.table(voom.Results_Lexa1KO_vs_WT, "/scratch/okhtienk/Results_Lexa1KO_vs_WT.txt",sep = "\t",col.names = NA,quote = F)
+write.table(voom.Results_Lexa2KO_vs_WT, "/scratch/okhtienk/Results_Lexa2KO_vs_WT.txt",sep = "\t",col.names = NA,quote = F)
+write.table(voom.Results_bothKO_vs_WT, "/scratch/okhtienk/Results_bothKO_vs_WT.txt",sep = "\t",col.names = NA,quote = F)
+write.table(voom.Results_rpoSKO_vs_WT, "/scratch/okhtienk/Results_rpoSKO_vs_WT.txt",sep = "\t",col.names = NA,quote = F)
+write.table(voom.Results_met_vs_dmso, "/scratch/okhtienk/Results_met_vs_dmso.txt",sep = "\t",col.names = NA,quote = F)
+```
+
+
+

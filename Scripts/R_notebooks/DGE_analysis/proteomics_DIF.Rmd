@@ -1,0 +1,626 @@
+---
+title: "Proteomics comparison DGE"
+output: html_notebook
+---
+
+
+```{r}
+library(tximport)
+library(dplyr)
+library(DESeq2)
+library(data.table) 
+library(ggplot2)
+options(bitmapType='cairo')
+```
+
+```{r}
+library(pheatmap)
+library(RColorBrewer)
+```
+
+## MET VS DMSO 
+
+```{r}
+prot <- read.csv('/scratch/okhtienk/total_prot_raw.csv')
+```
+
+```{r}
+colnames(prot)
+rownames(prot) <- prot$Gene
+
+#remove original column from data frame
+prot <- prot[,!names(prot) %in% c("Gene")]
+```
+
+```{r}
+coldata <- read.table('/scratch/okhtienk/prot_raw_info.tsv', header=TRUE)
+```
+
+
+```{r}
+#filtering of samples of interest
+prot_sel <- prot[c("DMSOR1","DMSOR2","DMSOR3","DMSOR4","DMSOR5", "MetR1","MetR2","MetR3","MetR4","MetR5")]
+prot_sel <- round(prot_sel/10) # Deseq requires integers + values are too high
+coldata <- coldata[(coldata$Sample %like% "DMSO") | (coldata$Sample %like% "Met"), ]
+```
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = prot_sel,
+                              colData = coldata,
+                              design = ~treat)
+```
+
+```{r}
+min(prot_sel)
+```
+```{r}
+max(prot_sel)
+```
+
+```{r}
+nrow(dds)
+keep <-rowSums(counts(dds)<5000)<ncol(counts(dds))*0.9
+dds <- dds[keep,]
+nrow(dds)
+```
+
+```{r}
+vsd <- vst(dds, blind = FALSE)
+rld <- rlog(dds, blind = FALSE)
+```
+
+```{r}
+dds <- estimateSizeFactors(dds)
+
+df <- bind_rows(
+  as_data_frame(log2(counts(dds, normalized=TRUE)[, 1:2]+1)) %>%
+         mutate(transformation = "log2(x + 1)"),
+  as_data_frame(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"),
+  as_data_frame(assay(rld)[, 1:2]) %>% mutate(transformation = "rlog"))
+  
+colnames(df)[1:2] <- c("x", "y")  
+
+lvls <- c("log2(x + 1)", "vst", "rlog")
+df$transformation <- factor(df$transformation, levels=lvls)
+ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 80) + coord_fixed() + facet_grid( . ~ transformation)
+```
+
+
+```{r}
+sampleDists <- dist(t(assay(rld)))
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <- paste( rld$treat )
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+```
+
+```{r}
+plotPCA(rld, intgroup = c("treat"))
+```
+
+```{r}
+library(apeglm)
+```
+
+```{r}
+dds <- DESeq(dds)
+```
+
+```{r}
+resultsNames(dds)
+```
+```{r}
+res <- lfcShrink(dds, coef="treat_met_vs_dmso", type="apeglm")
+```
+```{r}
+plotMA(res)
+```
+
+
+```{r}
+library(ggrepel)
+#BiocManager::install("EnhancedVolcano")
+library(EnhancedVolcano)
+```
+
+```{r}
+res.df <- as.data.frame(res)
+head(res.df)
+```
+```{r}
+filt.df <- filter(res.df, pvalue < 0.001, abs(log2FoldChange) > 1.5)
+
+EnhancedVolcano(res.df, 
+    lab = rownames(res.df),
+    selectLab = rownames(filt.df), 
+    x = 'log2FoldChange', 
+    y = 'padj',  
+    title = 'Met VS DMSO, proteomics', 
+    subtitle = 'B.uniformis', 
+    pCutoff = 0.01,  
+    FCcutoff = 0.5,
+    labSize = 3)
+```
+```{r}
+ggsave('/scratch/okhtienk/metVSdmso_prot_Volcano_plot.pdf', height = 10, width = 10)
+```
+
+```{r}
+library("genefilter")
+
+topVarGenes <- head(order(rowVars(assay(rld)), decreasing = TRUE), 30)
+mat  <- assay(rld)[ topVarGenes, ]
+mat  <- mat - rowMeans(mat)
+anno <- as.data.frame(colData(vsd)[, c('treat', 'phase')])
+pdf(file='/scratch/okhtienk/metVSdmso__prot_complex_heatmap.pdf')
+pheatmap(mat, annotation_col = anno)
+dev.off()
+```
+```{r}
+resOrdered <- res[order(res$pvalue),]
+res_df <- as.data.frame(resOrdered)
+write.csv(res_df, file = "/scratch/okhtienk/metVSdmso_prot_DEG_results.csv")
+```
+
+
+```{r}
+DEG_results <-  read.csv("/scratch/okhtienk/metVSdmso_prot_DEG_results.csv", header = TRUE, fill=TRUE)
+colnames(DEG_results) <- c("Gene","baseMean","log2FoldChange","lfcSE","pvalue","padj")
+go_genes <- read.table('/scratch/okhtienk/gomap_gene.tsv', header = TRUE, fill=TRUE)
+go_names <- read.csv('/scratch/okhtienk/gomap_go_names.csv', header = TRUE, fill=TRUE)
+```
+
+
+```{r}
+custom_go_enrich <- function(DEG_results, go_genes, go_names, pv, lfc_th ) {
+  if (lfc_th > 0) {
+  deg <- DEG_results[(DEG_results$padj<pv) & (DEG_results$log2FoldChange > lfc_th), ] # define DEG genes
+  } else {
+  deg <- DEG_results[(DEG_results$padj<pv) & (DEG_results$log2FoldChange < lfc_th), ] # define DEG genes
+  }
+  
+  N <- dim(deg)[1]
+  go_int <- left_join(deg, go_genes, by = 'Gene')
+  
+  go_int <- go_int%>% drop_na
+  x <- unique(go_int$go)
+  generatio_dict <- data.frame(go = c('GO'),
+                    M_number = c(1.8))
+  for(go_term in x) {
+    M <- sum(go_int$go == go_term)
+    new_row = c(go = go_term, M_number = M)
+    generatio_dict = rbind(generatio_dict,new_row)
+  }
+  generatio_dict <- generatio_dict[-1,]
+  rownames(generatio_dict) <- 1:nrow(generatio_dict)
+  
+  n <- dim(DEG_results)[1]
+  go_all <- left_join(DEG_results, go_genes, by = 'Gene')
+  go_all <- go_all%>% drop_na
+  bgratio_dict <- data.frame(go = c('GO'),
+                    k_number = c(1.8))
+  for(go_term in x) {
+    k <- sum(go_all$go == go_term)
+    new_row = c(go = go_term, k_number = k)
+    bgratio_dict = rbind(bgratio_dict,new_row)
+  }
+  bgratio_dict <- bgratio_dict[-1,]
+  rownames(bgratio_dict) <- 1:nrow(bgratio_dict)
+  
+  df <- merge(generatio_dict, bgratio_dict, by='go')
+  rownames(df) <- df$go
+  df <- subset(df, select=-c(go))
+  
+  df <- mutate_all(df, function(x) as.numeric(as.character(x)))
+  M <- df$M_number
+  k <- df$k_number
+  args.df <- data.frame(numWdrawn=M-1, ## White balls drawn
+                        numW=k,        ## White balls
+                        numB=n-k,      ## Black balls
+                        numDrawn=N)    ## balls drawn
+  
+  ## calculate pvalues based on hypergeometric model
+  pvalues <- apply(args.df, 1, function(n)
+                   phyper(n[1], n[2], n[3], n[4], lower.tail=FALSE))
+  ## gene ratio and background ratio
+  GeneRatio <- apply(data.frame(a=M, b=N), 1, function(x)
+                     paste(x[1], "/", x[2], sep="", collapse="")
+                     )
+  BgRatio <- apply(data.frame(a=k, b=n), 1, function(x)
+                   paste(x[1], "/", x[2], sep="", collapse="")
+                   )
+  Over <- data.frame(go = rownames(df),
+                     GeneRatio = GeneRatio,
+                     BgRatio = BgRatio,
+                     pvalue = pvalues)
+  
+  p.adj <- p.adjust(Over$pvalue, method="BH")
+  Over <- data.frame(Over,
+                     p.adjust = p.adj)
+  
+  Over_annot <- left_join(Over, go_names, by = 'go')
+  
+  return(Over_annot[Over_annot$p.adjust<0.05,])
+}
+```
+
+```{r}
+d<- custom_go_enrich(DEG_results, go_genes, go_names, 0.001, 0.5) # up-regulated
+d
+```
+
+```{r}
+d<- custom_go_enrich(DEG_results, go_genes, go_names, 0.001, -0.5) # down-regulated
+d
+```
+## EXP VS STAT
+
+```{r}
+coldata <- read.table('/scratch/okhtienk/prot_raw_info.tsv', header=TRUE)
+```
+
+
+```{r}
+#filtering of samples of interest
+prot_sel <- prot[c("exp_phaseR1", "exp_phaseR2", "exp_phaseR3", "exp_phaseR4", "exp_phaseR5","sta_phaseR1", "sta_phaseR2", "sta_phaseR3", "sta_phaseR4", "sta_phaseR5")]
+prot_sel <- round(prot_sel/10) # Deseq requires integers + values are too high
+coldata <- coldata[(coldata$Sample %like% "exp") | (coldata$Sample %like% "sta"), ]
+```
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = prot_sel,
+                              colData = coldata,
+                              design = ~phase)
+```
+
+```{r}
+nrow(dds)
+keep <-rowSums(counts(dds)<5000)<ncol(counts(dds))*0.9
+dds <- dds[keep,]
+nrow(dds)
+```
+
+```{r}
+vsd <- vst(dds, blind = FALSE)
+rld <- rlog(dds, blind = FALSE)
+```
+
+```{r}
+dds <- estimateSizeFactors(dds)
+
+df <- bind_rows(
+  as_data_frame(log2(counts(dds, normalized=TRUE)[, 1:2]+1)) %>%
+         mutate(transformation = "log2(x + 1)"),
+  as_data_frame(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"),
+  as_data_frame(assay(rld)[, 1:2]) %>% mutate(transformation = "rlog"))
+  
+colnames(df)[1:2] <- c("x", "y")  
+
+lvls <- c("log2(x + 1)", "vst", "rlog")
+df$transformation <- factor(df$transformation, levels=lvls)
+ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 80) + coord_fixed() + facet_grid( . ~ transformation)
+```
+
+
+```{r}
+sampleDists <- dist(t(assay(rld)))
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <- paste( rld$phase )
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+```
+
+```{r}
+plotPCA(rld, intgroup = c("phase"))
+```
+
+```{r}
+dds <- DESeq(dds)
+```
+
+```{r}
+resultsNames(dds)
+```
+```{r}
+res <- lfcShrink(dds, coef="phase_stat_vs_exp", type="apeglm")
+```
+```{r}
+plotMA(res)
+```
+
+```{r}
+res.df <- as.data.frame(res)
+head(res.df)
+```
+```{r}
+filt.df <- filter(res.df, pvalue < 0.001, abs(log2FoldChange) > 1.5)
+
+EnhancedVolcano(res.df, 
+    lab = rownames(res.df),
+    selectLab = rownames(filt.df), 
+    x = 'log2FoldChange', 
+    y = 'padj',  
+    title = 'Stat VS Exp, proteomics', 
+    subtitle = 'B.uniformis', 
+    pCutoff = 0.001,  
+    FCcutoff = 1.5,
+    labSize = 3)
+```
+```{r}
+ggsave('/scratch/okhtienk/statVSexp_prot_Volcano_plot.pdf', height = 10, width = 10)
+```
+
+```{r}
+library("genefilter")
+
+topVarGenes <- head(order(rowVars(assay(rld)), decreasing = TRUE), 30)
+mat  <- assay(rld)[ topVarGenes, ]
+mat  <- mat - rowMeans(mat)
+anno <- as.data.frame(colData(vsd)[, c('treat', 'phase')])
+pheatmap(mat, annotation_col = anno)
+```
+```{r}
+pdf(file='/scratch/okhtienk/statVSexp__prot_complex_heatmap.pdf')
+pheatmap(mat, annotation_col = anno)
+dev.off()
+```
+
+
+```{r}
+resOrdered <- res[order(res$pvalue),]
+res_df <- as.data.frame(resOrdered)
+write.csv(res_df, file = "/scratch/okhtienk/statVSexp_prot_DEG_results.csv")
+```
+
+
+```{r}
+DEG_results <-  read.csv("/scratch/okhtienk/statVSexp_prot_DEG_results.csv", header = TRUE, fill=TRUE)
+colnames(DEG_results) <- c("Gene","baseMean","log2FoldChange","lfcSE","pvalue","padj")
+go_genes <- read.table('/scratch/okhtienk/gomap_gene.tsv', header = TRUE, fill=TRUE)
+go_names <- read.csv('/scratch/okhtienk/gomap_go_names.csv', header = TRUE, fill=TRUE)
+```
+
+```{r}
+d<- custom_go_enrich(DEG_results, go_genes, go_names, 0.001, 1.5) # up-regulated
+d
+```
+
+```{r}
+d<- custom_go_enrich(DEG_results, go_genes, go_names, 0.001, -1.5) # down-regulated
+d
+```
+
+## LAG VS EXP
+
+
+```{r}
+coldata <- read.table('/scratch/okhtienk/prot_raw_info.tsv', header=TRUE)
+```
+
+
+```{r}
+#filtering of samples of interest
+prot_sel <- prot[c("exp_phaseR1", "exp_phaseR2", "exp_phaseR3", "exp_phaseR4", "exp_phaseR5","lag_phaseR1", "lag_phaseR2", "lag_phaseR3", "lag_phaseR4", "lag_phaseR5")]
+prot_sel <- round(prot_sel/10) # Deseq requires integers + values are too high
+coldata <- coldata[(coldata$Sample %like% "exp") | (coldata$Sample %like% "lag"), ]
+```
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = prot_sel,
+                              colData = coldata,
+                              design = ~phase)
+```
+
+```{r}
+nrow(dds)
+keep <-rowSums(counts(dds)<5000)<ncol(counts(dds))*0.9
+dds <- dds[keep,]
+nrow(dds)
+```
+
+```{r}
+vsd <- vst(dds, blind = FALSE)
+rld <- rlog(dds, blind = FALSE)
+```
+
+```{r}
+dds <- estimateSizeFactors(dds)
+
+df <- bind_rows(
+  as_data_frame(log2(counts(dds, normalized=TRUE)[, 1:2]+1)) %>%
+         mutate(transformation = "log2(x + 1)"),
+  as_data_frame(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"),
+  as_data_frame(assay(rld)[, 1:2]) %>% mutate(transformation = "rlog"))
+  
+colnames(df)[1:2] <- c("x", "y")  
+
+lvls <- c("log2(x + 1)", "vst", "rlog")
+df$transformation <- factor(df$transformation, levels=lvls)
+ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 80) + coord_fixed() + facet_grid( . ~ transformation)
+```
+
+
+```{r}
+sampleDists <- dist(t(assay(rld)))
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <- paste( rld$phase )
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+```
+
+```{r}
+plotPCA(rld, intgroup = c("phase"))
+```
+
+```{r}
+dds <- DESeq(dds)
+```
+
+```{r}
+resultsNames(dds)
+```
+```{r}
+res <- lfcShrink(dds, coef="phase_lag_vs_exp", type="apeglm")
+```
+```{r}
+plotMA(res)
+```
+
+```{r}
+res.df <- as.data.frame(res)
+head(res.df)
+```
+```{r}
+filt.df <- filter(res.df, pvalue < 0.001, abs(log2FoldChange) > 1.5)
+
+EnhancedVolcano(res.df, 
+    lab = rownames(res.df),
+    selectLab = rownames(filt.df), 
+    x = 'log2FoldChange', 
+    y = 'padj',  
+    title = 'Lag VS Exp, proteomics', 
+    subtitle = 'B.uniformis', 
+    pCutoff = 0.001,  
+    FCcutoff = 0.5,
+    labSize = 3)
+```
+```{r}
+ggsave('/scratch/okhtienk/lagVSexp_prot_Volcano_plot.pdf', height = 10, width = 10)
+```
+
+```{r}
+library("genefilter")
+
+topVarGenes <- head(order(rowVars(assay(rld)), decreasing = TRUE), 30)
+mat  <- assay(rld)[ topVarGenes, ]
+mat  <- mat - rowMeans(mat)
+anno <- as.data.frame(colData(vsd)[, c('treat', 'phase')])
+pheatmap(mat, annotation_col = anno)
+```
+```{r}
+pdf(file='/scratch/okhtienk/lagVSexp__prot_complex_heatmap.pdf')
+pheatmap(mat, annotation_col = anno)
+dev.off()
+```
+
+
+```{r}
+resOrdered <- res[order(res$pvalue),]
+res_df <- as.data.frame(resOrdered)
+write.csv(res_df, file = "/scratch/okhtienk/lagVSexp_prot_DEG_results.csv")
+```
+
+
+```{r}
+DEG_results <-  read.csv("/scratch/okhtienk/lagVSexp_prot_DEG_results.csv", header = TRUE, fill=TRUE)
+colnames(DEG_results) <- c("Gene","baseMean","log2FoldChange","lfcSE","pvalue","padj")
+go_genes <- read.table('/scratch/okhtienk/gomap_gene.tsv', header = TRUE, fill=TRUE)
+go_names <- read.csv('/scratch/okhtienk/gomap_go_names.csv', header = TRUE, fill=TRUE)
+```
+
+```{r}
+d<- custom_go_enrich(DEG_results, go_genes, go_names, 0.001, 0.5) # up-regulated
+d
+```
+
+```{r}
+d<- custom_go_enrich(DEG_results, go_genes, go_names, 0.001, -0.5) # down-regulated
+d
+```
+
+
+## Comparison with transcriptomics. Scatter plots
+
+```{r}
+tr_met <- read.csv("/scratch/okhtienk/DEG_data/metVSdmso_DEG_results.csv")[c('X', 'log2FoldChange')]
+pr_met <- read.csv("/scratch/okhtienk/lagVSexp_prot_DEG_results.csv")[c('X', 'log2FoldChange')]
+```
+```{r}
+names(tr_met)[names(tr_met) == "log2FoldChange"] <- "LFC_transc"
+names(pr_met)[names(pr_met) == "log2FoldChange"] <- "LFC_prot"
+```
+
+```{r}
+data_plot <- merge(tr_met,pr_met,by="X")
+```
+
+```{r}
+data_plot <- data_plot %>%
+  mutate(similarity = case_when(
+    abs(LFC_transc-LFC_prot)<0.5 ~ "y",
+    abs(LFC_transc-LFC_prot)>=0.5 ~ "n"
+    ))
+```
+
+
+```{r}
+ggplot(data_plot, aes(x=LFC_transc, y=LFC_prot, color=similarity)) + geom_point() + xlim(-6, 6)+ ylim(-6, 6)
+ggsave('/scratch/okhtienk/SCATTER/met_tr-VS_prot_scatter.pdf', height = 7, width = 10)
+
+```
+```{r}
+tr_stat <- read.csv("/scratch/okhtienk/DEG_data/stat_vs_exp_DEG_results.csv")[c('X', 'log2FoldChange')]
+pr_stat <- read.csv("/scratch/okhtienk/statVSexp_prot_DEG_results.csv")[c('X', 'log2FoldChange')]
+```
+```{r}
+names(tr_stat)[names(tr_stat) == "log2FoldChange"] <- "LFC_transc"
+names(pr_stat)[names(pr_stat) == "log2FoldChange"] <- "LFC_prot"
+```
+
+```{r}
+data_plot <- merge(tr_stat,pr_stat,by="X")
+```
+
+```{r}
+data_plot <- data_plot %>%
+  mutate(similarity = case_when(
+    abs(LFC_transc-LFC_prot)<0.5 ~ "y",
+    abs(LFC_transc-LFC_prot)>=0.5 ~ "n"
+    ))
+```
+
+
+```{r}
+ggplot(data_plot, aes(x=LFC_transc, y=LFC_prot, color=similarity)) + geom_point() + xlim(-6, 8)+ ylim(-6, 8)
+ggsave('/scratch/okhtienk/SCATTER/stat_tr_VS_prot_scatter.pdf', height = 7, width = 10)
+
+```
+```{r}
+tr_lag <- read.csv("/scratch/okhtienk/lag_vs_exp_DEG_results.csv")[c('X', 'log2FoldChange')]
+pr_lag <- read.csv("/scratch/okhtienk/lagVSexp_prot_DEG_results.csv")[c('X', 'log2FoldChange')]
+```
+```{r}
+names(tr_lag)[names(tr_lag) == "log2FoldChange"] <- "LFC_transc"
+names(pr_lag)[names(pr_lag) == "log2FoldChange"] <- "LFC_prot"
+```
+
+```{r}
+data_plot <- merge(tr_lag,pr_lag,by="X")
+```
+
+```{r}
+data_plot <- data_plot %>%
+  mutate(similarity = case_when(
+    abs(LFC_transc-LFC_prot)<0.5 ~ "y",
+    abs(LFC_transc-LFC_prot)>=0.5 ~ "n"
+    ))
+```
+
+```{r}
+ggplot(data_plot, aes(x=LFC_transc, y=LFC_prot, color=similarity)) + geom_point() + xlim(-4, 5)+ ylim(-4, 5)
+ggsave('/scratch/okhtienk/SCATTER/lag_tr_VS_prot_scatter.pdf', height = 7, width = 10)
+```
+
+

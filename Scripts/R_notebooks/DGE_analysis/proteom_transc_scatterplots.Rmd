@@ -1,0 +1,91 @@
+---
+title: "proteomics VS transcriptomics"
+output: html_notebook
+---
+
+```{r}
+library(DESeq2)
+```
+
+```{r}
+prot <- read.csv('/scratch/okhtienk/total_prot.csv')
+```
+
+```{r}
+
+dir <- "/scratch/okhtienk/metatrans/Salmon_sum"
+samples <- read.table(file.path(dir, "samples.txt"), header = TRUE)
+files <- file.path(dir, samples$run, "quant.sf")
+names(files) <- samples$Sample_name
+id_2_genes_map <- read.csv2("/scratch/okhtienk/egg_gene_names.tsv", header = T, sep = "\t")
+txi <- tximport(files, type="salmon", tx2gene=id_2_genes_map)
+```
+```{r}
+dds <- DESeqDataSetFromTximport(txi, samples, design = ~1) # Here we are not specifying a model
+dim(dds)
+#filtering: remove all features that have a count of less than 20 in more than 90% of the samples (78 samples)
+#keep <- rowSums(counts(dds)) >= 45
+keep <-rowSums(counts(dds)<20)<ncol(counts(dds))*0.9
+dds <- dds[keep,]
+dim(dds)
+```
+
+```{r}
+vsd <- vst(dds, blind=FALSE)
+vst_data <-as.data.frame(assay(vsd))
+vst_data$Gene <- rownames(vst_data)
+```
+
+```{r}
+prot$lag = rowMeans(prot[ , c("lag_phaseR1", "lag_phaseR2", "lag_phaseR3","lag_phaseR4", "lag_phaseR5")])
+prot$exp = rowMeans(prot[ , c("exp_phaseR1", "exp_phaseR2", "exp_phaseR3", "exp_phaseR4", "exp_phaseR5")])
+prot$stat = rowMeans(prot[ , c("sta_phaseR1", "sta_phaseR2", "sta_phaseR3", "sta_phaseR4", "sta_phaseR5")])
+prot$dmso = rowMeans(prot[ , c("DMSOR1", "DMSOR2", "DMSOR3","DMSOR4","DMSOR5")])
+prot$met = rowMeans(prot[ , c("MetR1", "MetR2", "MetR3", "MetR4", "MetR5")])
+```
+
+```{r}
+vst_data$lag = rowMeans(vst_data[ , c("lag_phase_1", 'lag_phase_2', 'lag_phase_3', 'lag_phase_4', 'lag_phase_5')])
+vst_data$exp = rowMeans(vst_data[ , c("exp_phase_1", 'exp_phase_2', 'exp_phase_3', 'exp_phase_4', 'exp_phase_5')])
+vst_data$stat = rowMeans(vst_data[ , c("stat_phase_1", 'stat_phase_2', 'stat_phase_3', 'stat_phase_4', 'stat_phase_5')])
+vst_data$dmso = rowMeans(vst_data[ , c("DMSO_1", 'DMSO_2', 'DMSO_3', 'DMSO_4', 'DMSO_5')])
+vst_data$met = rowMeans(vst_data[ , c("Met_1", 'Met_2', 'Met_3', 'Met_4', 'Met_5')])
+```
+
+```{r}
+pr <- prot[ , c('Gene', "lag", "exp", "stat","dmso", "met")]
+tr <- vst_data[ , c('Gene', "lag", "exp", "stat","dmso", "met")]
+```
+
+
+```{r}
+melt_pr <- melt(pr, id = c("Gene")) 
+names(melt_pr) <- c('Gene', 'condition', 'VST_pr')
+
+melt_tr <- melt(tr, id = c("Gene")) 
+names(melt_tr) <- c('Gene', 'condition', 'VST_tr')
+```
+
+
+```{r}
+data_plot <- merge(melt_pr, melt_tr,by=c("Gene", "condition"))
+```
+
+```{r}
+ggplot(data_plot[data_plot$condition == 'lag',], aes(x=VST_tr, y=VST_pr)) + geom_point() + xlim(5, 35)+ ylim(5, 35)
+```
+
+```{r}
+ggplot(data_plot[data_plot$condition == 'exp',], aes(x=VST_tr, y=VST_pr)) + geom_point() + xlim(5, 35)+ ylim(5, 35)
+```
+```{r}
+ggplot(data_plot[data_plot$condition == 'stat',], aes(x=VST_tr, y=VST_pr)) + geom_point() + xlim(5, 35)+ ylim(5, 35)
+```
+```{r}
+ggplot(data_plot[data_plot$condition == 'met',], aes(x=VST_tr, y=VST_pr)) + geom_point() + xlim(5, 35)+ ylim(5, 35)
+```
+```{r}
+ggplot(data_plot[data_plot$condition == 'dmso',], aes(x=VST_tr, y=VST_pr)) + geom_point() + xlim(5, 35)+ ylim(5, 35)
+```
+
+
