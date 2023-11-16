@@ -7,8 +7,6 @@ R_notebooks
 jupyter_notebooks
 
 - annogesic.txt: pipeline for dRNA-seq analysis
-- b_uni_type.fna: new EBI assembly of B.uniformis (2 contigs, contig_4-genome, contig_2-plasmid)
-- b_uni_type.gff: new EBI assembly of B.uniformis, gff annotation
 - egg_gene_names.tsv & index_matching.csv: tables with genes names and IDs (my annotation, modified EBI+EggNOG+UNIPROT)
 - meta_salmon.sh: transcriptomics analysis using alignment on transcriptome and Salmon tool (fast)
 - metatranscripromics_pipe.sh: long pipeline using genome and hisat2 (slow)
