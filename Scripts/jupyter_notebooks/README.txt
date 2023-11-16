@@ -1,0 +1,23 @@
+# short description of jupyter notebook files
+
+- assembly_strand_question.ipynb: comparison of new EBI B.uniformis assembly with old NCBI assembly and B.uniformis CL03T12C37 (GCF_018292165.1) in terms of strandness
+- b_theta_go.ipynb: creation of genes annotation table from gff annotation for B.theta
+- DEG_COG_enrichment.ipynb: creation of custom gene - GO term tables for B.uniformis using UNIPROT data
+- EBI_annotation_multicopy.ipynb: alignmnet of "multi-copy" genes from new EBI assembly of B.uniformis
+- gene_in _annot_calc.ipynb: calculation of gene names duplications in new EBI annotation
+- heatmap.ipynb: building heatmap of LexA protein similarity in Bactroides species
+- LexA_ortho.ipynb & lexA_orthologs_filtering.ipynb: working with OrthoFinder output
+- HMM_ortho_comparison.ipynb: comparison of OrthoFinder and HMM predictions regarding LexA
+- limma_deseq_comparison.ipynb: comparison of VSN+limma and raw+deseq2 strategies for proteomics (LFC) + tables for common DE genes in proteomics and transcriptomics
+- Motifs_regulatory_network.ipynb: binding motifs search, extraction of n bases upstream the gene
+- net_visualization.ipynb: network visualization of WGCNA results
+- pairwise_scatterplots.ipynb: scatterplots for conditions comparison in transcriptomics data
+- phyletic_pattern.ipynb: checking phyletic pattern of 10 SOS response genes in 50 species of Bacteroides
+- phylogenetic_footprinting.ipynb: implementation of phylogenetic footprinting approach (1st part requires bash, code is included)
+- prot_limma.ipynb: reviewing the analysis made by Savitski group (proteomics+VSN+limma)
+- qPCR.ipynb: analysis of qPCR measurements
+- tex_notex_validation.ipynb: comparison of gene coverage between TEX+ and TEX- samples in dRNA-seq
+- transc_prot.ipynb: parcing proteomics results. + Smart merging to make a self-made annotation of EBI assembly
+- uptream_MEME.ipynb: code from the article (https://doi.org/10.1093/nar/gkab773) for LexA binding mitifs investigation (stopped working)
+- get_gene_names_from_gff.ipynb: gff and eggnog annotation parsing
+- MIC.ipynb & MIC01_IC90_Lucia.ipynb: identification of minimal inhibitory concentrations of metronidazol
