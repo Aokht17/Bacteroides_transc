@@ -1,5 +1,5 @@
 
-# AO001_Bacteroides_transcription
+# Investigation of transcriptional regulation and stress response in _Bacteroides spp._
+### Master's thesis
 
-Bacteroides transcription project
-
+Understanding the transcriptional regulation and adaptation mechanisms of _Bacteroides_, a key member of the human gut microbiota, is crucial for comprehending host-microbe interactions. This study combines experimental and computational approaches (RNAseq, differential gene expression and network analysis, comparative genomics) to investigate transcription in _Bacteroides uniformis_ under a range of in vitro and in vivo conditions with the focus on DNA damage SOS response. To improve the mapping of transcription boundaries for transcriptomic data interpretation, we have also established a protocol for creation of high-resolution transcriptomic maps using differential RNAseq (dRNA-seq) approach. To probe bacterial adaptation to perturbations relevant in the gut environment, we compared different growth phases in vitro to DNA damage-inducing antibiotic treatment and mouse gut colonization, both mono- and in the context of a synthetic 8-species community, in germ-free mouse model. The results suggest that a highly specific set of genes is involved in the stress response in _Bacteroides_. Novel putative transcriptional regulators, similar to LexA proteins, were identified, providing insights into their potential roles in nucleotide biosynthesis. Overall, this research enhances our understanding of Bacteroides and sets the stage for future investigations of transcriptional regulation in the gut bacteria.
