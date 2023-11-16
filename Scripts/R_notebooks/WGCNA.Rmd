@@ -1,0 +1,1085 @@
+---
+title: "WGCNA"
+output: html_notebook
+---
+
+
+```{r}
+library(edgeR)
+```
+```{r}
+library(tximport)
+library(DESeq2)
+library(DEFormats)
+library(ggplot2)
+library(tidyr)
+library(WGCNA)
+library(flashClust)
+library(reshape2)
+options(bitmapType='cairo')
+```
+
+# Plots
+
+
+```{r}
+pcaData <- plotPCA(vsd, intgroup = c( "community", "phase.treat"), returnData = TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+ggplot(pcaData, aes(x = PC1, y = PC2, color = community, shape = phase.treat)) +
+  geom_point(size =3, aes()) +
+  scale_shape_manual(values = c(12,15,16,11,17,8)) +
+  xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+  ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+  coord_fixed() +
+  ggtitle("PCA with VST data")
+```
+```{r}
+# ggsave('/scratch/okhtienk/PCA_all_plot_small.pdf', height = 10, width = 10)
+```
+
+#WGCNA
+
+You can use VST or TMM+RPKM+log2(x+1) as a preprocessing
+
+```{r}
+
+dir <- "/scratch/okhtienk/metatrans/Salmon_sum/"
+samples <- read.table(file.path(dir, "samples_ch.txt"), header = TRUE)
+files <- file.path(dir, samples$run, "quant.sf")
+names(files) <- samples$Sample_name
+id_2_genes_map <- read.csv2("/scratch/okhtienk/metatrans/reference/gene_names.tsv", header = T, sep = "\t")
+txi <- tximport(files, type="salmon", tx2gene=id_2_genes_map)
+```
+```{r}
+dds <- DESeqDataSetFromTximport(txi, samples, design = ~1) # Here we are not specifying a model
+dim(dds)
+#filtering: remove all features that have a count of less than 10 in more than 90% of the samples (45 samples)
+#keep <- rowSums(counts(dds)) >= 45
+keep <-rowSums(counts(dds)<10)<ncol(counts(dds))*0.9
+dds <- dds[keep,]
+dim(dds)
+```
+
+```{r}
+vsd <- vst(dds, blind=FALSE)
+norm_counts <- assay(vsd) %>%t()
+vst_data <-as.data.frame(assay(vsd))
+```
+
+Alternatively
+
+```{r}
+cts <- txi$counts
+group <- c(1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,4,3,5,7,6,4,3,5,7,6,4,3,6,7,6,4,3,5,7,6,4,3,5,7,6)
+#1 -mono
+#2 - eight species
+#3 - culture lag
+#4 - culture exp
+#5 - culture stat
+#6 - culture DMSO
+#7 - culture antibiotics
+y <- DGEList(cts, group=group)
+keep <- filterByExpr(y)
+y <- y[keep,]
+y$samples$lib.size <- colSums(y$counts) #recomputing lib sizes
+y <- calcNormFactors(y)
+```
+
+Normalization RPKM + TMM + log2(x+1)
+
+```{r}
+gen_len <- read.csv2('/scratch/okhtienk/gene_len.tsv', header = T, sep = "\t")
+gen_sort <- gen_len[match(rownames(y$counts), gen_len$gene),]
+rpkm_data <- rpkm(y, gen_sort$len)
+
+log2p1 <- function(x) log1p(x)/log(2) # accurate function for log2(x+1) for x<<1
+log_data <- log2p1(rpkm_data)
+```
+```{r}
+tmm_data <- as.data.frame(log_data) %>%t()
+```
+
+#Plot the comparison of normalization strategies
+
+```{r}
+Sample <- rownames(tmm_data)
+lexA <- tmm_data[,'bc2018--bc2018___80_03723']
+dinB <- tmm_data[,'dinB']
+menD <- tmm_data[,'menD']
+df <- data.frame(Sample, lexA, dinB, menD)
+
+Sample <- rownames(norm_counts)
+lexA <- norm_counts[,'bc2018--bc2018___80_03723']
+dinB <- norm_counts[,'dinB']
+menD <- norm_counts[,'menD']
+df1 <- data.frame(Sample, lexA, dinB, menD)
+
+raw <- cts %>%t()
+Sample <- rownames(raw)
+lexA <- raw[,'bc2018--bc2018___80_03723']
+dinB <- raw[,'dinB']
+menD <- raw[,'menD']
+df2 <- data.frame(Sample, lexA, dinB, menD)
+
+```
+
+```{r}
+melt_data <- melt(df, id = c("Sample")) 
+names(melt_data) <- c('Sample', 'Gene', 'TMM_RPKM_log2p1')
+
+```
+
+```{r}
+
+ggplot(melt_data, aes(x=Sample, y=TMM_RPKM_log2p1, color=Gene, shape=Gene)) + geom_point()+scale_x_discrete(guide = guide_axis(angle = 90))
+```
+```{r}
+ggsave('/scratch/okhtienk/WGCNA/gene_TMM.pdf', height = 7, width = 12)
+```
+
+
+```{r}
+melt_data <- melt(df1, id = c("Sample")) 
+names(melt_data) <- c('Sample', 'Gene', 'VST')
+ggplot(melt_data, aes(x=Sample, y=VST, color=Gene, shape=Gene)) + geom_point()+scale_x_discrete(guide = guide_axis(angle = 90))
+ggsave('/scratch/okhtienk/WGCNA/gene_VST.pdf', height = 7, width = 12)
+```
+
+```{r}
+melt_data <- melt(df2, id = c("Sample")) 
+names(melt_data) <- c('Sample', 'Gene', 'Non_norm')
+ggplot(melt_data, aes(x=Sample, y=Non_norm, color=Gene, shape=Gene)) + geom_point()+scale_x_discrete(guide = guide_axis(angle = 90))
+ggsave('/scratch/okhtienk/WGCNA/gene_non_norm.pdf', height = 7, width = 12)
+```
+```{r}
+Sample <- rownames(norm_counts)
+recA <- norm_counts[,'recA']
+mshA <- norm_counts[,'mshA_7']
+sasA <- norm_counts[,'sasA_3']
+df1 <- data.frame(Sample, recA, mshA, sasA)
+
+melt_data <- melt(df1, id = c("Sample")) 
+names(melt_data) <- c('Sample', 'Gene', 'VST')
+ggplot(melt_data, aes(x=Sample, y=VST, color=Gene, shape=Gene)) + geom_point()+scale_x_discrete(guide = guide_axis(angle = 90))
+ggsave('/scratch/okhtienk/WGCNA/recA_VST.pdf', height = 7, width = 12)
+```
+```{r}
+Sample <- rownames(tmm_data)
+recA <- tmm_data[,'recA']
+mshA <- tmm_data[,'mshA_7']
+sasA <- tmm_data[,'sasA_3']
+df1 <- data.frame(Sample, recA, mshA, sasA)
+
+melt_data <- melt(df1, id = c("Sample")) 
+names(melt_data) <- c('Sample', 'Gene', 'TMM_RPKM_log2p1')
+ggplot(melt_data, aes(x=Sample, y=TMM_RPKM_log2p1, color=Gene, shape=Gene)) + geom_point()+scale_x_discrete(guide = guide_axis(angle = 90))
+ggsave('/scratch/okhtienk/WGCNA/recA_TMM.pdf', height = 7, width = 12)
+```
+```{r}
+Sample <- c('mono1','mono2','mono3','mono4','mono5','mono6','8_species1','8_species2','8_species3','8_species4','8_species5','8_species6','8_species7','8_species8','8_species9','8_species10','8_species11','8_species12','8_species13','8_species14','expphase10','lagphase1','staphase11','DMSO16','Met21','expphase6','lagphase2','staphase12','DMSO17','Met22','expphase7','lagphase3','staphase13','DMSO18','Met23','expphase8','lagphase4','staphase14','DMSO19','Met24','expphase9','lagphase5','staphase15','DMSO20','Met25')
+x_1 <- norm_counts[,'xerC_1']
+x_2 <- norm_counts[,'xerC_2']
+x_3 <- norm_counts[,'xerC_3']
+x_4 <- norm_counts[,'xerC_4']
+x_5 <- norm_counts[,'xerC_5']
+x_6 <- norm_counts[,'xerC_6']
+x_7 <- norm_counts[,'xerC_7']
+x_8 <- norm_counts[,'xerC_8']
+x_9 <- norm_counts[,'xerC_9']
+x_10 <- norm_counts[,'xerC_10']
+x_11 <- norm_counts[,'xerC_11']
+x_12 <- norm_counts[,'xerC_12']
+x_13 <- norm_counts[,'xerC_13']
+x_14 <- norm_counts[,'xerC_14']
+x_15 <- norm_counts[,'xerC_15']
+df1 <- data.frame(Sample, x_1, x_2, x_3, x_4, x_5,x_6, x_7, x_8, x_9, x_10, x_11, x_12, x_13, x_14, x_15)
+
+melt_data <- melt(df1, id = c("Sample")) 
+names(melt_data) <- c('Sample', 'xerC', 'VST')
+ggplot(melt_data, aes(x=Sample, y=VST, color=xerC)) + geom_point()+scale_x_discrete(guide = guide_axis(angle = 90))
+ggsave('/scratch/okhtienk/WGCNA/multiple_xerC.pdf', height = 7, width = 12)
+```
+
+```{r}
+Sample <- c('mono1','mono2','mono3','mono4','mono5','mono6','8_species1','8_species2','8_species3','8_species4','8_species5','8_species6','8_species7','8_species8','8_species9','8_species10','8_species11','8_species12','8_species13','8_species14','expphase10','lagphase1','staphase11','DMSO16','Met21','expphase6','lagphase2','staphase12','DMSO17','Met22','expphase7','lagphase3','staphase13','DMSO18','Met23','expphase8','lagphase4','staphase14','DMSO19','Met24','expphase9','lagphase5','staphase15','DMSO20','Met25')
+l_1 <- norm_counts[,'lacZ_1']
+l_2 <- norm_counts[,'lacZ_2']
+l_3 <- norm_counts[,'lacZ_3']
+l_4 <- norm_counts[,'lacZ_4']
+l_5 <- norm_counts[,'lacZ_5']
+l_6 <- norm_counts[,'lacZ_6']
+l_7 <- norm_counts[,'lacZ_7']
+l_8 <- norm_counts[,'lacZ_8']
+l_9 <- norm_counts[,'lacZ_9']
+l_10 <- norm_counts[,'lacZ_10']
+l_11 <- norm_counts[,'lacZ_11']
+l_12 <- norm_counts[,'lacZ_12']
+
+df1 <- data.frame(Sample, l_1, l_2, l_3, l_4, l_5,l_6, l_7, l_8, l_9, l_10, l_11, l_12)
+
+melt_data <- melt(df1, id = c("Sample")) 
+names(melt_data) <- c('Sample', 'lacZ', 'VST')
+ggplot(melt_data, aes(x=Sample, y=VST, color=lacZ)) + geom_point()+scale_x_discrete(guide = guide_axis(angle = 90))
+ggsave('/scratch/okhtienk/WGCNA/multiple_lacZ.pdf', height = 7, width = 12)
+```
+```{r}
+vst_data$sample <- rownames(vst_data)
+df <- melt(vst_data ,  id.vars = 'sample')
+```
+```{r}
+names(df) <- c('gene', 'Sample', 'VST')
+```
+
+```{r}
+ggplot(df, aes(x=VST)) + geom_density(aes(colour = Sample))
+```
+```{r}
+ggsave('/scratch/okhtienk/WGCNA/gene_distr.pdf', height = 7, width = 15)
+```
+
+```{r}
+vsd <- vst(dds, blind=FALSE)
+norm_counts <- assay(vsd) %>%t()
+Sample <- c('mono1','mono2','mono3','mono4','mono5','mono6','8_species1','8_species2','8_species3','8_species4','8_species5','8_species6','8_species7','8_species8','8_species9','8_species10','8_species11','8_species12','8_species13','8_species14','expphase10','lagphase1','staphase11','DMSO16','Met21','expphase6','lagphase2','staphase12','DMSO17','Met22','expphase7','lagphase3','staphase13','DMSO18','Met23','expphase8','lagphase4','staphase14','DMSO19','Met24','expphase9','lagphase5','staphase15','DMSO20','Met25')
+l_1 <- norm_counts[,'BACUNI_01940']
+
+df1 <- data.frame(Sample, l_1)
+
+```
+
+```{r}
+
+melt_data <- melt(df1, id = c("Sample")) 
+names(melt_data) <- c('Sample', 'susR', 'VST')
+ggplot(melt_data, aes(x=Sample, y=VST)) + geom_point()+scale_x_discrete(guide = guide_axis(angle = 90))
+```
+```{r}
+vsd_data <- assay(vsd)
+
+colnames(vsd_data) <- c('mono1','mono2','mono3','mono4','mono5','mono6','8_species1','8_species2','8_species3','8_species4','8_species5','8_species6','8_species7','8_species8','8_species9','8_species10','8_species11','8_species12','8_species13','8_species14','expphase10','lagphase1','staphase11','DMSO16','Met21','expphase6','lagphase2','staphase12','DMSO17','Met22','expphase7','lagphase3','staphase13','DMSO18','Met23','expphase8','lagphase4','staphase14','DMSO19','Met24','expphase9','lagphase5','staphase15','DMSO20','Met25')
+
+```
+
+```{r}
+write.csv(vsd_data, "/scratch/okhtienk/vst_table.csv")
+```
+
+```{r}
+colnames(vst_data) <- c('mono1','mono2','mono3','mono4','mono5','mono6','8_species1','8_species2','8_species3','8_species4','8_species5','8_species6','8_species7','8_species8','8_species9','8_species10','8_species11','8_species12','8_species13','8_species14','expphase10','lagphase1','staphase11','DMSO16','Met21','expphase6','lagphase2','staphase12','DMSO17','Met22','expphase7','lagphase3','staphase13','DMSO18','Met23','expphase8','lagphase4','staphase14','DMSO19','Met24','expphase9','lagphase5','staphase15','DMSO20','Met25', "add_1","add_2","add_3","add_4","add_5","add_6","add_7","add_8","add_9", "add_10","add_11","add_12","add_13","add_14", "add_15","add_16","add_17","add_18","add_19")
+```
+
+```{r}
+norm_counts <- vst_data %>%t()
+lexA<- norm_counts[,'BACUNI_00526']
+dinB<- norm_counts[,'dinB']
+recA <- norm_counts[,'recA']
+recX <- norm_counts[,'kduI']
+kdpA <- norm_counts[,'bc2018--bc2018___80_02257']
+```
+
+```{r}
+spec <- c("mono","mono","mono","mono","mono","mono","8_species","8_species","8_species","8_species","8_species","8_species","8_species","8_species","8_species","8_species","8_species","8_species","8_species","8_species","expphase","lagphase","staphase","DMSO","Met","expphase","lagphase","staphase","DMSO","Met","expphase","lagphase","staphase","DMSO","Met","expphase","lagphase","staphase","DMSO","Met","expphase","lagphase","staphase","DMSO","Met","add","add","add","add","add","add","add","add","add","add","add","add","add","add","add","add","add","add","add", "add","add","add","add","add","add","add","add","add","add","add","add","add","add")
+```
+
+```{r}
+df1 <- data.frame(colnames(vst_data), lexA, kdpA, spec)
+names(df1) <- c('Sample', 'lexA', 'hypotet')
+ggplot(df1, aes(x=hypotet, y=lexA, color=spec)) + geom_point() + xlim(6, 12)+ ylim(6, 12) + geom_abline(intercept = 18, slope = -1)
+#ggplot(df1, aes(x=recX, y=lexA, color=spec)) + geom_point() + xlim(6, 10.5)+ ylim(6, 10.5) + geom_abline()
+```
+# Actual code
+
+#Use annotation based on eggNOG
+
+```{r}
+
+dir <- "/scratch/okhtienk/metatrans/Salmon_sum"
+samples <- read.table(file.path(dir, "samples.txt"), header = TRUE)
+files <- file.path(dir, samples$run, "quant.sf")
+names(files) <- samples$Sample_name
+id_2_genes_map <- read.csv2("/scratch/okhtienk/egg_gene_names.tsv", header = T, sep = "\t")
+txi <- tximport(files, type="salmon", tx2gene=id_2_genes_map)
+```
+```{r}
+dds <- DESeqDataSetFromTximport(txi, samples, design = ~1) # Here we are not specifying a model
+dim(dds)
+#filtering: remove all features that have a count of less than 20 in more than 90% of the samples (78 samples)
+#keep <- rowSums(counts(dds)) >= 45
+keep <-rowSums(counts(dds)<20)<ncol(counts(dds))*0.9
+dds <- dds[keep,]
+dim(dds)
+```
+
+```{r}
+vsd <- vst(dds, blind=FALSE)
+norm_counts <- assay(vsd) %>%t()
+vst_data <-as.data.frame(assay(vsd))
+```
+
+
+#load proteomics data for additional network (in the end of document)
+
+```{r}
+prot <- read.csv('/scratch/okhtienk/total_prot.csv')
+```
+
+```{r}
+vst_data$Gene <- rownames(vst_data)
+```
+
+```{r}
+tr_prot <- merge(vst_data,prot,by="Gene")
+tr_prot <- tr_prot[, -grep("lane", colnames(tr_prot))]
+```
+
+```{r}
+#tr_prot_short <- sample_n(tr_prot, 12)
+tr_prot_short <- tr_prot[tr_prot$Gene == 'rho', ]
+```
+
+```{r}
+melt_data <- melt(tr_prot_short, id = c("Gene")) 
+names(melt_data) <- c('Gene', 'condition', 'counts')
+melt_data$condition <- lapply(melt_data$condition, toString)
+```
+
+
+```{r}
+dict_to_replace <- c("Cexpphase10"='Transcript',"Clagphase1"='Transcript',"Cstaphase11"='Transcript', "EDMSO16"='Transcript',"EMet21"='Transcript', "Cexpphase6"='Transcript',"Clagphase2"='Transcript',"Cstaphase12"='Transcript',"EDMSO17" ='Transcript',"EMet22"='Transcript',  "Cexpphase7"='Transcript', "Clagphase3"='Transcript',"Cstaphase13"='Transcript',"EDMSO18"='Transcript',"EMet23"='Transcript',    "Cexpphase8"='Transcript',"Clagphase4" ='Transcript', "Cstaphase14"='Transcript', "EDMSO19"='Transcript',"EMet24"='Transcript',     "Cexpphase9"='Transcript',"Clagphase5"='Transcript',"Cstaphase15"='Transcript',"EDMSO20"='Transcript',"EMet25"='Transcript', "exp_phaseR1"="Protein","exp_phaseR2"="Protein", "exp_phaseR3"="Protein","exp_phaseR4"="Protein","exp_phaseR5"="Protein", "lag_phaseR1"="Protein", "lag_phaseR2"="Protein", "lag_phaseR3"="Protein", "lag_phaseR4"="Protein", "lag_phaseR5"="Protein", "sta_phaseR1"="Protein", "sta_phaseR2"="Protein", "sta_phaseR3"="Protein", "sta_phaseR4"="Protein", "sta_phaseR5"="Protein", "DMSOR1" ="Protein", "DMSOR2"="Protein", "DMSOR3"="Protein", "DMSOR4"="Protein", "DMSOR5"="Protein", "MetR1"="Protein", "MetR2"="Protein", "MetR3"="Protein","MetR4"="Protein","MetR5"="Protein")
+```
+```{r}
+melt_data$condition = unlist(melt_data$condition)
+```
+```{r}
+melt_data['mol_type'] = "uns"
+```
+```{r}
+dict_to_replace['Cexpphase10']
+```
+
+```{r}
+for (name in names(dict_to_replace)){
+  melt_data[melt_data$condition == name, "mol_type"] = dict_to_replace[name]
+}
+```
+
+```{r}
+dict_cond <- c("Cexpphase10"='exp_5',"Clagphase1"='lag_1',"Cstaphase11"='stat_1', "EDMSO16"='dmso_1',"EMet21"='met_1', "Cexpphase6"='exp_1',"Clagphase2"='lag_2',"Cstaphase12"='stat_2',"EDMSO17" ='dmso_2',"EMet22"='met_2',  "Cexpphase7"='exp_2', "Clagphase3"='lag_3',"Cstaphase13"='stat_3',"EDMSO18"='dmso_3',"EMet23"='met_3',    "Cexpphase8"='exp_3',"Clagphase4" ='lag_4', "Cstaphase14"='stat_4', "EDMSO19"='dmso_4',"EMet24"='met_4',     "Cexpphase9"='exp_4',"Clagphase5"='lag_5',"Cstaphase15"='stat_5',"EDMSO20"='dmso_5',"EMet25"='met_5', "exp_phaseR1"="exp_1","exp_phaseR2"="exp_2", "exp_phaseR3"="exp_3","exp_phaseR4"="exp_4","exp_phaseR5"="exp_5", "lag_phaseR1"="lag_1", "lag_phaseR2"="lag_2", "lag_phaseR3"="lag_3", "lag_phaseR4"="lag_4", "lag_phaseR5"="lag_5", "sta_phaseR1"="stat_1", "sta_phaseR2"="stat_2", "sta_phaseR3"="stat_3", "sta_phaseR4"="stat_4", "sta_phaseR5"="stat_5", "DMSOR1" ="dmso_1", "DMSOR2"="dmso_2", "DMSOR3"="dmso_3", "DMSOR4"="dmso_4", "DMSOR5"="dmso_5", "MetR1"="met_1", "MetR2"="met_2", "MetR3"="met_3","MetR4"="met_4","MetR5"="met_5")
+```
+
+```{r}
+for (name in names(dict_cond)){
+  melt_data[melt_data$condition == name, "condition"] = dict_cond[name]
+}
+```
+
+```{r}
+ggplot(melt_data, aes(x=condition, y=counts, color=mol_type)) + geom_point()+scale_x_discrete(guide = guide_axis(angle = 90))
+ggsave('/scratch/okhtienk/WGCNA/rho_protVStransc.pdf', height = 7, width = 10)
+```
+
+```{r}
+rownames(prot) <- prot$Gene
+prot = subset(prot, select = -c(Gene) )
+norm_prot <- prot %>%t()
+```
+
+#Quantile scatterplots
+
+```{r}
+qqnorm(vst_data$lane1014MZI000248, pch = 1, frame = FALSE)
+qqline(vst_data$lane1014MZI000248, col = "steelblue", lwd = 2)
+```
+
+```{r}
+qqnorm(vst_data$EMet24, pch = 1, frame = FALSE)
+qqline(vst_data$EMet24, col = "steelblue", lwd = 2)
+```
+
+#Outliers checking
+
+```{r}
+gsg = goodSamplesGenes(norm_counts, verbose = 3);
+gsg$allOK
+```
+
+Code to filter outliers (if any)
+
+```{r}
+if (!gsg$allOK)
+{
+if (sum(!gsg$goodGenes)>0) 
+printFlush(paste("Removing genes:", paste(names(expression.data)[!gsg$goodGenes], collapse = ", "))); #Identifies and prints outlier genes
+if (sum(!gsg$goodSamples)>0)
+printFlush(paste("Removing samples:", paste(rownames(expression.data)[!gsg$goodSamples], collapse = ", "))); #Identifies and prints outlier samples
+expression.data <- expression.data[gsg$goodSamples == TRUE, gsg$goodGenes == TRUE] # Removes the offending genes and samples from the data
+}
+```
+
+
+```{r}
+sampleTree = hclust(dist(norm_counts), method = "average");
+# Plot the sample tree: Open a graphic output window of size 12 by 9 inches
+# The user should change the dimensions if the window is too large or too small.
+sizeGrWindow(12,9)
+par(cex = 0.6);
+par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 1.5,
+cex.axis = 1.5, cex.main = 2)
+```
+#Signed TOM. Parameter identification
+
+```{r}
+# sft <- pickSoftThreshold(norm_counts,
+#   dataIsExpr = TRUE,
+#   corFnc = cor,
+#   networkType = "signed"
+# )
+```
+
+```{r}
+# sft_df <- data.frame(sft$fitIndices) %>%
+#   dplyr::mutate(model_fit = -sign(slope) * SFT.R.sq)
+```
+
+WGCNA’s authors recommend using a power that has an signed R2 above 0.80, otherwise they warn your results may be too noisy to be meaningful.
+
+```{r}
+# ggplot(sft_df, aes(x = Power, y = model_fit, label = Power)) +
+#   # Plot the points
+#   geom_point() +
+#   # We'll put the Power labels slightly above the data points
+#   geom_text(nudge_y = 0.1) +
+#   # We will plot what WGCNA recommends as an R^2 cutoff
+#   geom_hline(yintercept = 0.80, col = "red") +
+#   # Just in case our values are low, we want to make sure we can still see the 0.80 level
+#   ylim(c(min(sft_df$model_fit), 1.05)) +
+#   # We can add more sensible labels for our axis
+#   xlab("Soft Threshold (power)") +
+#   ylab("Scale Free Topology Model Fit, signed R^2") +
+#   ggtitle("Scale independence") +
+#   # This adds some nicer aesthetics to our plot
+#   theme_classic()
+```
+We will choose a power soft-threshold of 17 (which is already a rather big value)
+
+Running WGCNA
+
+```{r}
+# bwnet <- blockwiseModules(norm_counts,
+#   maxBlockSize = 20000, # What size chunks (how many genes) the calculations should be run in
+#   TOMType = "signed", # topological overlap matrix
+#   power = 17, # soft threshold for network construction
+#   numericLabels = TRUE, # Let's use numbers instead of colors for module labels
+#   randomSeed = 1234,
+# )
+```
+
+Writing to file
+
+```{r}
+# readr::write_rds(bwnet,
+#   file = file.path( "signed_wgcna_results.RDS")
+# )
+
+```
+
+```{r}
+# module_eigengenes <- bwnet$MEs
+# 
+# # Print out a preview
+# head(module_eigengenes)
+```
+
+```{r}
+# gene_module_key <- tibble::enframe(bwnet$colors, name = "gene", value = "module") %>%
+#   # Let's add the `ME` part so its more clear what these numbers are and it matches elsewhere
+#   dplyr::mutate(module = paste0("ME", module))
+```
+
+```{r}
+# gene_module_key %>%
+#   dplyr::filter(module == "ME19")
+```
+```{r}
+# readr::write_tsv(gene_module_key,
+#   file = file.path("WGCNA", "signed_19_gene_to_module.tsv")
+# )
+
+```
+
+#Unsigned network
+
+In a signed correlation network, nodes with negative correlation are considered unconnected. The unsigned network adjacency is based on the absolute value of correlation, so positive and negative correlations are treated equally
+
+```{r}
+powers = c(c(1:10), seq(from = 12, to=20, by=2));
+#powers = seq(from = 1, to=20, by=2);
+#sft=pickSoftThreshold(norm_counts,dataIsExpr = TRUE, powerVector = powers, corOptions = list(use = 'p', method = 'spearman'),networkType = "unsigned") # slow
+sft=pickSoftThreshold(norm_counts,dataIsExpr = TRUE, powerVector = powers,networkType = "unsigned") # default is Pearson
+```
+```{r}
+sft$power
+```
+
+Suggested power is 6
+
+```{r}
+# Plot the results
+sizeGrWindow(9, 5)
+par(mfrow = c(1,2));
+cex1 = 0.9;
+
+# Scale-free topology fit index as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit, signed R^2",type="n", main = paste("Scale independence"));
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],labels=powers,cex=cex1,col="red");
+
+# Red line corresponds to using an R^2 cut-off
+abline(h=0.80,col="red")
+
+# Mean connectivity as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], sft$fitIndices[,5],xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",main = paste("Mean connectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+```
+We should be maximizing the R2 value and minimizing mean connectivity
+Generating adjacency and TOM similarity matrices based on the selected softpower
+
+```{r}
+softPower = 7;
+
+#calculate the adjacency matrix
+adj= adjacency(norm_counts,type = "unsigned", power = softPower); # Pearson corr by default
+#adj= adjacency(norm_counts,type = "unsigned", power = softPower, corOptions = list(use = 'p', method = 'spearman'));
+
+#turn adjacency matrix into topological overlap to minimize the effects of noise and spurious associations
+TOM=TOMsimilarity(adj);
+
+```
+```{r}
+colnames(TOM) =rownames(TOM)=colnames(norm_counts)
+```
+
+```{r}
+dissTOM=1-TOM #transform into measures of gene dissimilarity
+```
+
+Module detection
+A module is a group of gene profiles that are highly correlated, or have a high topological overlap.
+
+```{r}
+#hierarchical clustering of the genes based on the TOM dissimilarity measure
+geneTree = flashClust(as.dist(dissTOM),method="average");
+
+#plot the resulting clustering tree (dendrogram)
+plot(geneTree, xlab="", sub="",cex=0.3);
+```
+
+```{r}
+# Set the minimum module size
+minModuleSize = 7;
+
+# Module identification using dynamic tree cut
+
+#dynamicMods = cutreeDynamic(dendro = geneTree,  method="tree", minClusterSize = minModuleSize);
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM, method="hybrid", deepSplit = 2, pamRespectsDendro = FALSE, minClusterSize = minModuleSize);
+
+#the following command gives the module labels and the size of each module. Label 0 is reserved for unassigned genes
+table(dynamicMods)
+```
+
+So, we have 59 modules. The largest contains 420 genes. 3 genes are unassigned.
+
+```{r}
+# check how many modules and un-assigned genes we have with different minModuleSize value
+minModuleSize = 5;
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM, method="hybrid", deepSplit = 2, pamRespectsDendro = FALSE, minClusterSize = minModuleSize);
+table(dynamicMods)
+```
+we have 70 modules. The largest contains 412 genes. 3 genes are unassigned.
+
+```{r}
+minModuleSize = 10;
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM, method="hybrid", deepSplit = 2, pamRespectsDendro = FALSE, minClusterSize = minModuleSize);
+table(dynamicMods)
+```
+
+we have 52 modules. The largest contains 430 genes. 3 genes are unassigned.
+
+```{r}
+minModuleSize = 15;
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM, method="hybrid", deepSplit = 2, pamRespectsDendro = FALSE, minClusterSize = minModuleSize);
+table(dynamicMods)
+```
+we have 42 modules. The largest contains 425 genes. 3 genes are unassigned.
+
+```{r}
+minModuleSize = 20;
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM, method="hybrid", deepSplit = 2, pamRespectsDendro = FALSE, minClusterSize = minModuleSize);
+table(dynamicMods)
+```
+we have 35 modules. The largest contains 425 genes. 4 genes are unassigned.
+
+```{r}
+minModuleSize = 25;
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM, method="hybrid", deepSplit = 2, pamRespectsDendro = FALSE, minClusterSize = minModuleSize);
+table(dynamicMods)
+```
+we have 31 modules. The largest contains 428 genes. 5 genes are unassigned.
+
+```{r}
+minModuleSize = 30;
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM, method="hybrid", deepSplit = 2, pamRespectsDendro = FALSE, minClusterSize = minModuleSize);
+table(dynamicMods)
+```
+
+we have 29 modules. The largest contains 483 genes. 7 genes are unassigned.
+
+```{r}
+Min_Module_Size<- c(5,7,10,15,20,25,30)
+Num_Modules <- c(62,48,41,33,25,23,19)
+Unassigned_Genes <- c(0,1,1,4,5,5,6)
+
+df <- data.frame(Min_Module_Size, Num_Modules, Unassigned_Genes)
+```
+
+```{r}
+# for Spearman correlation
+
+Min_Module_Size<- c(5,7,10,15,20,25,30)
+Num_Modules <- c(156,133,81,54,38,32,27)
+Unassigned_Genes <- c(133,154,184,224,241,239,252)
+
+df <- data.frame(Min_Module_Size, Num_Modules, Unassigned_Genes)
+```
+
+
+```{r}
+ggplot(df) + 
+  geom_col(aes(x = Min_Module_Size, y = Num_Modules),size = 1, color = "darkblue", fill = "white") +
+  geom_line(aes(x = Min_Module_Size, y = Unassigned_Genes),size = 1.5, color="red", group = 1) +
+   scale_y_continuous(sec.axis = sec_axis(~./3, name = "Unassigned_Genes"))
+```
+Let's stop at 10
+
+```{r}
+minModuleSize = 10;
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM, method="hybrid", deepSplit = 2, pamRespectsDendro = FALSE, minClusterSize = minModuleSize);
+table(dynamicMods)
+```
+
+15 for Spearman
+
+```{r}
+minModuleSize = 15;
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM, method="hybrid", deepSplit = 2, pamRespectsDendro = FALSE, minClusterSize = minModuleSize);
+table(dynamicMods)
+```
+
+```{r}
+#Plot the module assignment under the dendrogram; note: The grey color is reserved for unassigned genes
+dynamicColors = labels2colors(dynamicMods)
+table(dynamicColors)
+```
+```{r}
+plotDendroAndColors(geneTree, dynamicColors, "Dynamic Tree Cut", dendroLabels = FALSE, hang = 0.03, addGuide = TRUE, guideHang = 0.05, main = "Gene dendrogram and module colors")
+```
+```{r}
+#discard the unassigned genes, and focus on the rest
+restGenes= (dynamicColors != "grey")
+diss1=1-TOMsimilarityFromExpr(norm_counts[,restGenes], power = softPower)
+```
+```{r}
+colnames(diss1) =rownames(diss1) =colnames(norm_counts)[restGenes]
+hier1=flashClust(as.dist(diss1), method="average" )
+plotDendroAndColors(hier1, dynamicColors[restGenes], "Dynamic Tree Cut", dendroLabels = FALSE, hang = 0.03, addGuide = TRUE, guideHang = 0.05, main = "Gene dendrogram and module colors")
+```
+```{r}
+#set the diagonal of the dissimilarity to NA 
+diag(diss1) = NA;
+
+#Visualize the Tom plot. Raise the dissimilarity matrix to the power of 4 to bring out the module structure
+sizeGrWindow(7,7)
+TOMplot(diss1, hier1, as.character(dynamicColors[restGenes]))
+```
+
+
+Quantify module similarity by eigengene correlation. Eigengenes: Module representatives
+
+```{r}
+MEList = moduleEigengenes(norm_counts, colors = dynamicColors)
+MEs = MEList$eigengenes
+plotEigengeneNetworks(MEs, "", marDendro = c(0,4,1,2), marHeatmap = c(3,4,1,2))
+```
+
+```{r}
+head(MEs)
+# We have now identified the eigengenes for the data
+# An eigengene is the gene whose expression is representative of the the majority of genes expressed within a module
+```
+
+#Module Merging
+
+```{r}
+ME.dissimilarity = 1-cor(MEList$eigengenes, use="complete") #Calculate eigengene dissimilarity
+```
+
+Any branches below this line are more than 85% related, and we will thus be merging them
+
+```{r}
+METree = hclust(as.dist(ME.dissimilarity), method = "average") #Clustering eigengenes 
+par(mar = c(0,4,2,0)) #setting margin sizes
+par(cex = 0.6);#scaling the graphic
+plot(METree)
+abline(h=.15, col = "red") #a height of .25 corresponds to correlation of .75
+```
+```{r}
+merge <- mergeCloseModules(norm_counts, dynamicColors, cutHeight = .15)
+```
+
+```{r}
+# The merged module colors, assigning one color to each module
+mergedColors = merge$colors
+# Eigengenes of the new merged modules
+mergedMEs = merge$newMEs
+```
+
+```{r}
+plotDendroAndColors(geneTree, cbind(dynamicColors, mergedColors), 
+c("Original Module", "Merged Module"),
+dendroLabels = FALSE, hang = 0.03,
+addGuide = TRUE, guideHang = 0.05,
+main = "Gene dendrogram and module colors for original and merged modules")
+```
+```{r}
+table(mergedColors)
+```
+
+Extract modules (not merged)
+Write genes into separate files
+
+```{r}
+module_colors= setdiff(unique(dynamicColors), "grey")
+for (color in module_colors){
+    module=colnames(norm_counts)[which(dynamicColors==color)]
+    write.table(module, paste("module_",color, ".txt",sep=""), sep="\t", row.names=FALSE, col.names=FALSE,quote=FALSE)
+}
+```
+
+```{r}
+module.order <- unlist(tapply(1:ncol(norm_counts),as.factor(dynamicColors),I))
+m<-t(t(norm_counts[,module.order])/apply(norm_counts[,module.order],2,max))
+heatmap(t(m),zlim=c(0,1),col=gray.colors(100),Rowv=NA,Colv=NA,labRow=NA,scale="none",RowSideColors=dynamicColors[module.order])
+```
+
+Export to Cytoscape. Saving the network
+
+```{r}
+sign.it<-cor(norm_counts)
+sign.it[sign.it<0]<-(-1)
+sign.it[sign.it>0]<-(1)
+TOM <- TOM*sign.it
+```
+
+```{r}
+cyt = exportNetworkToCytoscape(TOM,
+edgeFile = "0.1_net_add.txt",
+nodeFile = "0.1_nodes_add.txt",
+weighted = T,
+threshold = 0.1,
+nodeNames = colnames(adj),
+nodeAttr = dynamicColors)
+```
+
+
+Extract modules (merged)
+Write genes into separate files
+
+```{r}
+module_colors= setdiff(unique(mergedColors), "grey")
+for (color in module_colors){
+    module=colnames(norm_counts)[which(mergedColors==color)]
+    write.table(module, paste("module_merged_",color, ".txt",sep=""), sep="\t", row.names=FALSE, col.names=FALSE,quote=FALSE)
+}
+```
+
+Export to Cytoscape. Saving the merged network
+
+```{r}
+cyt = exportNetworkToCytoscape(TOM,
+edgeFile = "0.10_net_merged_add.txt",
+nodeFile = "0.10_nodes_merged_add.txt",
+weighted = T,
+threshold = 0.10,
+nodeNames = colnames(adj),
+nodeAttr = mergedColors)
+```
+
+#Build the same network using proteomics data
+
+```{r}
+gsg = goodSamplesGenes(norm_prot, verbose = 3);
+gsg$allOK
+```
+
+```{r}
+sampleTree = hclust(dist(norm_prot), method = "average");
+# Plot the sample tree: Open a graphic output window of size 12 by 9 inches
+# The user should change the dimensions if the window is too large or too small.
+sizeGrWindow(12,9)
+par(cex = 0.6);
+par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 1.5,
+cex.axis = 1.5, cex.main = 2)
+```
+```{r}
+#powers = c(c(1:10), seq(from = 12, to=20, by=2));
+powers = seq(from = 2, to=20, by=2);
+sft=pickSoftThreshold(norm_prot,dataIsExpr = TRUE, powerVector = powers, corOptions = list(use = 'p', method = 'spearman'), networkType = "unsigned")
+```
+```{r}
+sft$power
+```
+
+
+```{r}
+# Plot the results
+sizeGrWindow(9, 5)
+par(mfrow = c(1,2));
+cex1 = 0.9;
+
+# Scale-free topology fit index as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit, signed R^2",type="n", main = paste("Scale independence"));
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],labels=powers,cex=cex1,col="red");
+
+# Red line corresponds to using an R^2 cut-off
+abline(h=0.80,col="red")
+
+# Mean connectivity as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], sft$fitIndices[,5],xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",main = paste("Mean connectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+```
+```{r}
+softPower = 20;
+
+#calculate the adjacency matrix
+#adj= adjacency(norm_counts,type = "unsigned", power = softPower); # Pearson corr by default
+adj= adjacency(norm_prot,type = "unsigned", power = softPower, corOptions = list(use = 'p', method = 'spearman'));
+
+#turn adjacency matrix into topological overlap to minimize the effects of noise and spurious associations
+TOM=TOMsimilarity(adj);
+
+```
+```{r}
+colnames(TOM) =rownames(TOM)=colnames(norm_prot)
+```
+
+```{r}
+dissTOM=1-TOM #transform into measures of gene dissimilarity
+```
+
+Module detection
+A module is a group of gene profiles that are highly correlated, or have a high topological overlap.
+
+```{r}
+#hierarchical clustering of the genes based on the TOM dissimilarity measure
+geneTree = flashClust(as.dist(dissTOM),method="average");
+
+#plot the resulting clustering tree (dendrogram)
+plot(geneTree, xlab="", sub="",cex=0.3);
+```
+```{r}
+# Set the minimum module size
+minModuleSize = 5;
+
+# Module identification using dynamic tree cut
+
+#dynamicMods = cutreeDynamic(dendro = geneTree,  method="tree", minClusterSize = minModuleSize);
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM, method="hybrid", deepSplit = 2, pamRespectsDendro = FALSE, minClusterSize = minModuleSize);
+
+#the following command gives the module labels and the size of each module. Label 0 is reserved for unassigned genes
+table(dynamicMods)
+```
+
+So, we have 37 modules. The largest contains 302 genes. 6 genes are unassigned.
+
+```{r}
+minModuleSize = 10;
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM, method="hybrid", deepSplit = 2, pamRespectsDendro = FALSE, minClusterSize = minModuleSize);
+table(dynamicMods)
+```
+
+we have 29 modules. The largest contains 303 genes. 13 genes are unassigned.
+
+```{r}
+minModuleSize = 15;
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM, method="hybrid", deepSplit = 2, pamRespectsDendro = FALSE, minClusterSize = minModuleSize);
+table(dynamicMods)
+```
+we have 22 modules. The largest contains 318 genes. 22 genes are unassigned.
+
+```{r}
+minModuleSize = 20;
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM, method="hybrid", deepSplit = 2, pamRespectsDendro = FALSE, minClusterSize = minModuleSize);
+table(dynamicMods)
+```
+we have 20 modules. The largest contains 318 genes. 23 genes are unassigned.
+
+```{r}
+minModuleSize = 25;
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM, method="hybrid", deepSplit = 2, pamRespectsDendro = FALSE, minClusterSize = minModuleSize);
+table(dynamicMods)
+```
+we have 19 modules. The largest contains 318 genes. 25 genes are unassigned.
+
+```{r}
+minModuleSize = 30;
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM, method="hybrid", deepSplit = 2, pamRespectsDendro = FALSE, minClusterSize = minModuleSize);
+table(dynamicMods)
+```
+
+we have 13 modules. The largest contains 318 genes. 41 genes are unassigned.
+
+```{r}
+minModuleSize = 7;
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM, method="hybrid", deepSplit = 2, pamRespectsDendro = FALSE, minClusterSize = minModuleSize);
+table(dynamicMods)
+```
+
+```{r}
+minModuleSize = 6;
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM, method="hybrid", deepSplit = 2, pamRespectsDendro = FALSE, minClusterSize = minModuleSize);
+table(dynamicMods)
+```
+
+
+```{r}
+Min_Module_Size<- c(5,6, 7,10,15,20,25,30)
+Num_Modules <- c(37,32,29,27,22,20,19,13)
+Unassigned_Genes <- c(6,12,13,13,22,23,25,41)
+
+df <- data.frame(Min_Module_Size, Num_Modules, Unassigned_Genes)
+```
+
+
+```{r}
+ggplot(df) + 
+  geom_col(aes(x = Min_Module_Size, y = Num_Modules),size = 1, color = "darkblue", fill = "white") +
+  geom_line(aes(x = Min_Module_Size, y = Unassigned_Genes),size = 1.5, color="red", group = 1) +
+   scale_y_continuous(sec.axis = sec_axis(~./3, name = "Unassigned_Genes"))
+```
+```{r}
+minModuleSize = 5;
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM, method="hybrid", deepSplit = 2, pamRespectsDendro = FALSE, minClusterSize = minModuleSize);
+table(dynamicMods)
+```
+
+```{r}
+#Plot the module assignment under the dendrogram; note: The grey color is reserved for unassigned genes
+dynamicColors = labels2colors(dynamicMods)
+table(dynamicColors)
+```
+```{r}
+plotDendroAndColors(geneTree, dynamicColors, "Dynamic Tree Cut", dendroLabels = FALSE, hang = 0.03, addGuide = TRUE, guideHang = 0.05, main = "Gene dendrogram and module colors")
+```
+```{r}
+#discard the unassigned genes, and focus on the rest
+restGenes= (dynamicColors != "grey")
+diss1=1-TOMsimilarityFromExpr(norm_prot[,restGenes], power = softPower)
+```
+```{r}
+colnames(diss1) =rownames(diss1) =colnames(norm_prot)[restGenes]
+hier1=flashClust(as.dist(diss1), method="average" )
+plotDendroAndColors(hier1, dynamicColors[restGenes], "Dynamic Tree Cut", dendroLabels = FALSE, hang = 0.03, addGuide = TRUE, guideHang = 0.05, main = "Gene dendrogram and module colors")
+```
+```{r}
+#set the diagonal of the dissimilarity to NA 
+diag(diss1) = NA;
+
+#Visualize the Tom plot. Raise the dissimilarity matrix to the power of 4 to bring out the module structure
+sizeGrWindow(7,7)
+TOMplot(diss1, hier1, as.character(dynamicColors[restGenes]))
+```
+
+Quantify module similarity by eigengene correlation. Eigengenes: Module representatives
+
+```{r}
+MEList = moduleEigengenes(norm_prot, colors = dynamicColors)
+MEs = MEList$eigengenes
+plotEigengeneNetworks(MEs, "", marDendro = c(0,4,1,2), marHeatmap = c(3,4,1,2))
+```
+#Module Merging
+
+```{r}
+ME.dissimilarity = 1-cor(MEList$eigengenes, use="complete") #Calculate eigengene dissimilarity
+```
+
+Any branches below this line are more than 85% related, and we will thus be merging them
+
+```{r}
+METree = hclust(as.dist(ME.dissimilarity), method = "average") #Clustering eigengenes 
+par(mar = c(0,4,2,0)) #setting margin sizes
+par(cex = 0.6);#scaling the graphic
+plot(METree)
+abline(h=.25, col = "red") #a height of .25 corresponds to correlation of .75
+```
+```{r}
+merge <- mergeCloseModules(norm_prot, dynamicColors, cutHeight = .25)
+```
+
+```{r}
+# The merged module colors, assigning one color to each module
+mergedColors = merge$colors
+# Eigengenes of the new merged modules
+mergedMEs = merge$newMEs
+```
+
+```{r}
+plotDendroAndColors(geneTree, cbind(dynamicColors, mergedColors), 
+c("Original Module", "Merged Module"),
+dendroLabels = FALSE, hang = 0.03,
+addGuide = TRUE, guideHang = 0.05,
+main = "Gene dendrogram and module colors for original and merged modules")
+```
+```{r}
+table(mergedColors)
+```
+
+Extract modules (not merged)
+Write genes into separate files
+
+```{r}
+module_colors= setdiff(unique(dynamicColors), "grey")
+for (color in module_colors){
+    module=colnames(norm_prot)[which(dynamicColors==color)]
+    write.table(module, paste("module_prot_",color, ".txt",sep=""), sep="\t", row.names=FALSE, col.names=FALSE,quote=FALSE)
+}
+```
+
+```{r}
+module.order <- unlist(tapply(1:ncol(norm_prot),as.factor(dynamicColors),I))
+m<-t(t(norm_prot[,module.order])/apply(norm_prot[,module.order],2,max))
+heatmap(t(m),zlim=c(0,1),col=gray.colors(100),Rowv=NA,Colv=NA,labRow=NA,scale="none",RowSideColors=dynamicColors[module.order])
+```
+
+Export to Cytoscape. Saving the network
+
+```{r}
+sign.it<-cor(norm_prot)
+sign.it[sign.it<0]<-(-1)
+sign.it[sign.it>0]<-(1)
+TOM <- TOM*sign.it
+```
+
+```{r}
+cyt = exportNetworkToCytoscape(TOM,
+edgeFile = "0.1_net_prot_spear.txt",
+nodeFile = "0.1_nodes_prot_spear.txt",
+weighted = T,
+threshold = 0.1,
+nodeNames = colnames(adj),
+nodeAttr = dynamicColors)
+```
+
+#Trying BioNERO assembly-package
+
+
