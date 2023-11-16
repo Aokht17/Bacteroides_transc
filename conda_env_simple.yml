@@ -1,0 +1,6 @@
+name: r4_env
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+prefix: /home/nastya/miniconda3/envs/r4_env/envs/r4_env
