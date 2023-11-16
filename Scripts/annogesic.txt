@@ -1,0 +1,336 @@
+ANNOgesic version 1.1.4
+
+cd dRNA_seq
+for file in *; do mv "$file" "${file#AAAYLC7HV_dRNA-seq_23s000215-1-1_Okhtienko_lane1LM010}"; done;
+cd ../
+cd B_uni_transc_map
+conda activate meta
+sbatch -t 24:00:00 -N1 -n20 --mem 32G preproc.sh /scratch/okhtienk/dRNA_seq/
+---------------------------------------------------------------------------------------------------------
+#!/bin/bash
+
+raw=$1
+
+raw_files="$(find $raw -type f )"
+
+############## MAIN ####################
+
+mkdir raw_QC
+cd raw_QC
+fastqc $raw_files -o .
+multiqc .
+echo "QC is ready"
+cd ..
+
+mkdir Trim
+cd Trim
+mkdir trim_QC
+trim_galore  --fastqc_args "--outdir ./trim_QC" --three_prime_clip_R1 12 --clip_R1 2 --length 20 --cores 16 --trim-n $raw_files
+cd trim_QC
+multiqc .
+echo "Trimming is ready"
+cd ../..
+----------------------------------------------------------------------------------------------------------
+conda deactivate
+conda activate reademption_a
+reademption create --project_path Reademption --species bacteroides="Bacteroides uniformis"
+cp /scratch/okhtienk/metatrans/reference/fna/b_uni_type.fna Reademption/input/bacteroides_reference_sequences/
+cp /scratch/okhtienk/metatrans/reference/gff/b_uni_type.gff Reademption/input/bacteroides_annotations/B_uni_type.gff3
+cd Trim
+mkdir trimmed_fq
+mv *_trimmed.fq.gz trimmed_fq/
+cp Trim/trimmed_fq/* Reademption/input/reads
+gunzip *
+
+reademption align -q -p 12 --poly_a_clipping --project_path Reademption # doesn't run with slurm!!!!!!!!!!!!!!! Takes ~3 days
+reademption coverage -p 12 --project_path Reademption
+
+annogesic create --project_path ANNOgesic
+cp Reademption/input/bacteroides_reference_sequences/* ANNOgesic/input/references/fasta_files/
+cp Reademption/input/bacteroides_annotations/* ANNOgesic/input/references/annotations/
+cp Reademption/output/bacteroides_coverage-tnoar_min_normalized/* ANNOgesic/input/wigs/tex_notex/
+
+# Here the coverage values are normalized by the total number of aligned reads (TNOAR) of the individual library and then multiplied by the lowest TNOAR value of all libraries. 
+## *at this point you should visualize (e.g in IGV) a couple of paired wig files together with the genome and its annotation. It is possible that strands are flipped because of the library preparation procedure. Make sure that the coverage patterns in forward and reverse wig files are consistent with the + or - strand in gff. You may need to rename files manually and change the sign inside them (forward wig files have positive values and reverse wig files have negative values)*
+
+WIG_FOLDER="ANNOgesic/input/wigs/tex_notex"
+
+TEX_LIBS="$WIG_FOLDER/Cexpphase6_sequence.txt.gz_trimmed_div_by_26738265.0_multi_by_681056.0_forward.wig:notex:2:a:+ \
+        $WIG_FOLDER/Cexpphase6_sequence.txt.gz_trimmed_div_by_26738265.0_multi_by_681056.0_reverse.wig:notex:2:a:- \
+        $WIG_FOLDER/TEX_Cexpphase6_sequence.txt.gz_trimmed_div_by_14404127.0_multi_by_681056.0_forward.wig:tex:2:a:+ \
+        $WIG_FOLDER/TEX_Cexpphase6_sequence.txt.gz_trimmed_div_by_14404127.0_multi_by_681056.0_reverse.wig:tex:2:a:- \
+        $WIG_FOLDER/Cexpphase7_sequence.txt.gz_trimmed_div_by_25343842.0_multi_by_681056.0_forward.wig:notex:2:b:+ \
+        $WIG_FOLDER/Cexpphase7_sequence.txt.gz_trimmed_div_by_25343842.0_multi_by_681056.0_reverse.wig:notex:2:b:- \
+        $WIG_FOLDER/TEX_Cexpphase7_sequence.txt.gz_trimmed_div_by_8106012.0_multi_by_681056.0_forward.wig:tex:2:b:+ \
+        $WIG_FOLDER/TEX_Cexpphase7_sequence.txt.gz_trimmed_div_by_8106012.0_multi_by_681056.0_reverse.wig:tex:2:b:- \
+        $WIG_FOLDER/Cexpphase8_sequence.txt.gz_trimmed_div_by_23280901.0_multi_by_681056.0_forward.wig:notex:2:c:+ \
+        $WIG_FOLDER/Cexpphase8_sequence.txt.gz_trimmed_div_by_23280901.0_multi_by_681056.0_reverse.wig:notex:2:c:- \
+        $WIG_FOLDER/TEX_Cexpphase8_sequence.txt.gz_trimmed_div_by_8169448.0_multi_by_681056.0_forward.wig:tex:2:c:+ \
+        $WIG_FOLDER/TEX_Cexpphase8_sequence.txt.gz_trimmed_div_by_8169448.0_multi_by_681056.0_reverse.wig:tex:2:c:- \
+        $WIG_FOLDER/Cexpphase9_sequence.txt.gz_trimmed_div_by_26445786.0_multi_by_681056.0_forward.wig:notex:2:d:+ \
+        $WIG_FOLDER/Cexpphase9_sequence.txt.gz_trimmed_div_by_26445786.0_multi_by_681056.0_reverse.wig:notex:2:d:- \
+        $WIG_FOLDER/TEX_Cexpphase9_sequence.txt.gz_trimmed_div_by_3236018.0_multi_by_681056.0_forward.wig:tex:2:d:+ \
+        $WIG_FOLDER/TEX_Cexpphase9_sequence.txt.gz_trimmed_div_by_3236018.0_multi_by_681056.0_reverse.wig:tex:2:d:- \
+        $WIG_FOLDER/Cexpphase10_sequence.txt.gz_trimmed_div_by_24642337.0_multi_by_681056.0_forward.wig:notex:2:e:+ \
+        $WIG_FOLDER/Cexpphase10_sequence.txt.gz_trimmed_div_by_24642337.0_multi_by_681056.0_reverse.wig:notex:2:e:- \
+        $WIG_FOLDER/TEX_Cexpphase10_sequence.txt.gz_trimmed_div_by_16017239.0_multi_by_681056.0_forward.wig:tex:2:e:+ \
+        $WIG_FOLDER/TEX_Cexpphase10_sequence.txt.gz_trimmed_div_by_16017239.0_multi_by_681056.0_reverse.wig:tex:2:e:- \
+        $WIG_FOLDER/Clagphase1_sequence.txt.gz_trimmed_div_by_20457351.0_multi_by_681056.0_forward.wig:notex:1:a:+ \
+        $WIG_FOLDER/Clagphase1_sequence.txt.gz_trimmed_div_by_20457351.0_multi_by_681056.0_reverse.wig:notex:1:a:- \
+        $WIG_FOLDER/TEX_Clagphase1_sequence.txt.gz_trimmed_div_by_6157780.0_multi_by_681056.0_forward.wig:tex:1:a:+ \
+        $WIG_FOLDER/TEX_Clagphase1_sequence.txt.gz_trimmed_div_by_6157780.0_multi_by_681056.0_reverse.wig:tex:1:a:- \
+        $WIG_FOLDER/Clagphase2_sequence.txt.gz_trimmed_div_by_21014665.0_multi_by_681056.0_forward.wig:notex:1:b:+ \
+        $WIG_FOLDER/Clagphase2_sequence.txt.gz_trimmed_div_by_21014665.0_multi_by_681056.0_reverse.wig:notex:1:b:- \
+        $WIG_FOLDER/TEX_Clagphase2_sequence.txt.gz_trimmed_div_by_9653959.0_multi_by_681056.0_forward.wig:tex:1:b:+ \
+        $WIG_FOLDER/TEX_Clagphase2_sequence.txt.gz_trimmed_div_by_9653959.0_multi_by_681056.0_reverse.wig:tex:1:b:- \
+        $WIG_FOLDER/Clagphase3_sequence.txt.gz_trimmed_div_by_27444113.0_multi_by_681056.0_forward.wig:notex:1:c:+ \
+        $WIG_FOLDER/Clagphase3_sequence.txt.gz_trimmed_div_by_27444113.0_multi_by_681056.0_reverse.wig:notex:1:c:- \
+        $WIG_FOLDER/TEX_Clagphase3_sequence.txt.gz_trimmed_div_by_10339529.0_multi_by_681056.0_forward.wig:tex:1:c:+ \
+        $WIG_FOLDER/TEX_Clagphase3_sequence.txt.gz_trimmed_div_by_10339529.0_multi_by_681056.0_reverse.wig:tex:1:c:- \
+        $WIG_FOLDER/Clagphase4_sequence.txt.gz_trimmed_div_by_27789959.0_multi_by_681056.0_forward.wig:notex:1:d:+ \
+        $WIG_FOLDER/Clagphase4_sequence.txt.gz_trimmed_div_by_27789959.0_multi_by_681056.0_reverse.wig:notex:1:d:- \
+        $WIG_FOLDER/TEX_Clagphase4_sequence.txt.gz_trimmed_div_by_783742.0_multi_by_681056.0_forward.wig:tex:1:d:+ \
+        $WIG_FOLDER/TEX_Clagphase4_sequence.txt.gz_trimmed_div_by_783742.0_multi_by_681056.0_reverse.wig:tex:1:d:- \
+        $WIG_FOLDER/Clagphase5_sequence.txt.gz_trimmed_div_by_22725590.0_multi_by_681056.0_forward.wig:notex:1:e:+ \
+        $WIG_FOLDER/Clagphase5_sequence.txt.gz_trimmed_div_by_22725590.0_multi_by_681056.0_reverse.wig:notex:1:e:- \
+        $WIG_FOLDER/TEX_Clagphase5_sequence.txt.gz_trimmed_div_by_2360289.0_multi_by_681056.0_forward.wig:tex:1:e:+ \
+        $WIG_FOLDER/TEX_Clagphase5_sequence.txt.gz_trimmed_div_by_2360289.0_multi_by_681056.0_reverse.wig:tex:1:e:- \
+        $WIG_FOLDER/Cstaphase11_sequence.txt.gz_trimmed_div_by_28227653.0_multi_by_681056.0_forward.wig:notex:3:a:+ \
+        $WIG_FOLDER/Cstaphase11_sequence.txt.gz_trimmed_div_by_28227653.0_multi_by_681056.0_reverse.wig:notex:3:a:- \
+        $WIG_FOLDER/TEX_Cstaphase11_sequence.txt.gz_trimmed_div_by_7888599.0_multi_by_681056.0_forward.wig:tex:3:a:+ \
+        $WIG_FOLDER/TEX_Cstaphase11_sequence.txt.gz_trimmed_div_by_7888599.0_multi_by_681056.0_reverse.wig:tex:3:a:- \
+        $WIG_FOLDER/Cstaphase12_sequence.txt.gz_trimmed_div_by_33086392.0_multi_by_681056.0_forward.wig:notex:3:b:+ \
+        $WIG_FOLDER/Cstaphase12_sequence.txt.gz_trimmed_div_by_33086392.0_multi_by_681056.0_reverse.wig:notex:3:b:- \
+        $WIG_FOLDER/TEX_Cstaphase12_sequence.txt.gz_trimmed_div_by_13015971.0_multi_by_681056.0_forward.wig:tex:3:b:+ \
+        $WIG_FOLDER/TEX_Cstaphase12_sequence.txt.gz_trimmed_div_by_13015971.0_multi_by_681056.0_reverse.wig:tex:3:b:- \
+        $WIG_FOLDER/Cstaphase13_sequence.txt.gz_trimmed_div_by_34910681.0_multi_by_681056.0_forward.wig:notex:3:c:+ \
+        $WIG_FOLDER/Cstaphase13_sequence.txt.gz_trimmed_div_by_34910681.0_multi_by_681056.0_reverse.wig:notex:3:c:- \
+        $WIG_FOLDER/TEX_Cstaphase13_sequence.txt.gz_trimmed_div_by_11039838.0_multi_by_681056.0_forward.wig:tex:3:c:+ \
+        $WIG_FOLDER/TEX_Cstaphase13_sequence.txt.gz_trimmed_div_by_11039838.0_multi_by_681056.0_reverse.wig:tex:3:c:- \
+        $WIG_FOLDER/Cstaphase14_sequence.txt.gz_trimmed_div_by_28380754.0_multi_by_681056.0_forward.wig:notex:3:d:+ \
+        $WIG_FOLDER/Cstaphase14_sequence.txt.gz_trimmed_div_by_28380754.0_multi_by_681056.0_reverse.wig:notex:3:d:- \
+        $WIG_FOLDER/TEX_Cstaphase14_sequence.txt.gz_trimmed_div_by_26642582.0_multi_by_681056.0_forward.wig:tex:3:d:+ \
+        $WIG_FOLDER/TEX_Cstaphase14_sequence.txt.gz_trimmed_div_by_26642582.0_multi_by_681056.0_reverse.wig:tex:3:d:- \
+        $WIG_FOLDER/Cstaphase15_sequence.txt.gz_trimmed_div_by_27352379.0_multi_by_681056.0_forward.wig:notex:3:e:+ \
+        $WIG_FOLDER/Cstaphase15_sequence.txt.gz_trimmed_div_by_27352379.0_multi_by_681056.0_reverse.wig:notex:3:e:- \
+        $WIG_FOLDER/TEX_Cstaphase15_sequence.txt.gz_trimmed_div_by_6364513.0_multi_by_681056.0_forward.wig:tex:3:e:+ \
+        $WIG_FOLDER/TEX_Cstaphase15_sequence.txt.gz_trimmed_div_by_6364513.0_multi_by_681056.0_reverse.wig:tex:3:e:- \
+        $WIG_FOLDER/EDMSO16_sequence.txt.gz_trimmed_div_by_31140462.0_multi_by_681056.0_forward.wig:notex:5:a:+ \
+        $WIG_FOLDER/EDMSO16_sequence.txt.gz_trimmed_div_by_31140462.0_multi_by_681056.0_reverse.wig:notex:5:a:- \
+        $WIG_FOLDER/TEX_EDMSO16_sequence.txt.gz_trimmed_div_by_1634847.0_multi_by_681056.0_forward.wig:tex:5:a:+ \
+        $WIG_FOLDER/TEX_EDMSO16_sequence.txt.gz_trimmed_div_by_1634847.0_multi_by_681056.0_reverse.wig:tex:5:a:- \
+        $WIG_FOLDER/EDMSO17_sequence.txt.gz_trimmed_div_by_25982444.0_multi_by_681056.0_forward.wig:notex:5:b:+ \
+        $WIG_FOLDER/EDMSO17_sequence.txt.gz_trimmed_div_by_25982444.0_multi_by_681056.0_reverse.wig:notex:5:b:- \
+        $WIG_FOLDER/TEX_EDMSO17_sequence.txt.gz_trimmed_div_by_681056.0_multi_by_681056.0_forward.wig:tex:5:b:+ \
+        $WIG_FOLDER/TEX_EDMSO17_sequence.txt.gz_trimmed_div_by_681056.0_multi_by_681056.0_reverse.wig:tex:5:b:- \
+        $WIG_FOLDER/EDMSO18_sequence.txt.gz_trimmed_div_by_22920948.0_multi_by_681056.0_forward.wig:notex:5:c:+ \
+        $WIG_FOLDER/EDMSO18_sequence.txt.gz_trimmed_div_by_22920948.0_multi_by_681056.0_reverse.wig:notex:5:c:- \
+        $WIG_FOLDER/TEX_EDMSO18_sequence.txt.gz_trimmed_div_by_13414955.0_multi_by_681056.0_forward.wig:tex:5:c:+ \
+        $WIG_FOLDER/TEX_EDMSO18_sequence.txt.gz_trimmed_div_by_13414955.0_multi_by_681056.0_reverse.wig:tex:5:c:- \
+        $WIG_FOLDER/EDMSO19_sequence.txt.gz_trimmed_div_by_24466137.0_multi_by_681056.0_forward.wig:notex:5:d:+ \
+        $WIG_FOLDER/EDMSO19_sequence.txt.gz_trimmed_div_by_24466137.0_multi_by_681056.0_reverse.wig:notex:5:d:- \
+        $WIG_FOLDER/TEX_EDMSO19_sequence.txt.gz_trimmed_div_by_15705429.0_multi_by_681056.0_forward.wig:tex:5:d:+ \
+        $WIG_FOLDER/TEX_EDMSO19_sequence.txt.gz_trimmed_div_by_15705429.0_multi_by_681056.0_reverse.wig:tex:5:d:- \
+        $WIG_FOLDER/EDMSO20_sequence.txt.gz_trimmed_div_by_32986740.0_multi_by_681056.0_forward.wig:notex:5:e:+ \
+        $WIG_FOLDER/EDMSO20_sequence.txt.gz_trimmed_div_by_32986740.0_multi_by_681056.0_reverse.wig:notex:5:e:- \
+        $WIG_FOLDER/TEX_EDMSO20_sequence.txt.gz_trimmed_div_by_15857688.0_multi_by_681056.0_forward.wig:tex:5:e:+ \
+        $WIG_FOLDER/TEX_EDMSO20_sequence.txt.gz_trimmed_div_by_15857688.0_multi_by_681056.0_reverse.wig:tex:5:e:- \
+        $WIG_FOLDER/EMet21_sequence.txt.gz_trimmed_div_by_12746179.0_multi_by_681056.0_forward.wig:notex:4:a:+ \
+        $WIG_FOLDER/EMet21_sequence.txt.gz_trimmed_div_by_12746179.0_multi_by_681056.0_reverse.wig:notex:4:a:- \
+        $WIG_FOLDER/TEX_EMet21_sequence.txt.gz_trimmed_div_by_6719755.0_multi_by_681056.0_forward.wig:tex:4:a:+ \
+	$WIG_FOLDER/TEX_EMet21_sequence.txt.gz_trimmed_div_by_6719755.0_multi_by_681056.0_reverse.wig:tex:4:a:- \
+        $WIG_FOLDER/EMet22_sequence.txt.gz_trimmed_div_by_14171518.0_multi_by_681056.0_forward.wig:notex:4:b:+ \
+        $WIG_FOLDER/EMet22_sequence.txt.gz_trimmed_div_by_14171518.0_multi_by_681056.0_reverse.wig:notex:4:b:- \
+        $WIG_FOLDER/TEX_EMet22_sequence.txt.gz_trimmed_div_by_10057461.0_multi_by_681056.0_forward.wig:tex:4:b:+ \
+        $WIG_FOLDER/TEX_EMet22_sequence.txt.gz_trimmed_div_by_10057461.0_multi_by_681056.0_reverse.wig:tex:4:b:- \
+        $WIG_FOLDER/EMet23_sequence.txt.gz_trimmed_div_by_16356384.0_multi_by_681056.0_forward.wig:notex:4:c:+ \
+        $WIG_FOLDER/EMet23_sequence.txt.gz_trimmed_div_by_16356384.0_multi_by_681056.0_reverse.wig:notex:4:c:- \
+        $WIG_FOLDER/TEX_EMet23_sequence.txt.gz_trimmed_div_by_4964318.0_multi_by_681056.0_forward.wig:tex:4:c:+ \
+        $WIG_FOLDER/TEX_EMet23_sequence.txt.gz_trimmed_div_by_4964318.0_multi_by_681056.0_reverse.wig:tex:4:c:- \
+        $WIG_FOLDER/EMet24_sequence.txt.gz_trimmed_div_by_15952591.0_multi_by_681056.0_forward.wig:notex:4:d:+ \
+        $WIG_FOLDER/EMet24_sequence.txt.gz_trimmed_div_by_15952591.0_multi_by_681056.0_reverse.wig:notex:4:d:- \
+        $WIG_FOLDER/TEX_EMet24_sequence.txt.gz_trimmed_div_by_6546036.0_multi_by_681056.0_forward.wig:tex:4:d:+ \
+        $WIG_FOLDER/TEX_EMet24_sequence.txt.gz_trimmed_div_by_6546036.0_multi_by_681056.0_reverse.wig:tex:4:d:- \
+        $WIG_FOLDER/EMet25_sequence.txt.gz_trimmed_div_by_15261807.0_multi_by_681056.0_forward.wig:notex:4:e:+ \
+        $WIG_FOLDER/EMet25_sequence.txt.gz_trimmed_div_by_15261807.0_multi_by_681056.0_reverse.wig:notex:4:e:- \
+        $WIG_FOLDER/TEX_EMet25_sequence.txt.gz_trimmed_div_by_2571715.0_multi_by_681056.0_forward.wig:tex:4:e:+ \
+        $WIG_FOLDER/TEX_EMet25_sequence.txt.gz_trimmed_div_by_2571715.0_multi_by_681056.0_reverse.wig:tex:4:e:-"
+
+
+STORAGE_PATH="/scratch/okhtienk/B_uni_transc_map"
+
+singularity exec -B $STORAGE_PATH annogesic.img annogesic tss_ps \
+    --fasta_files ANNOgesic/input/references/fasta_files/b_uni_genome.fa ANNOgesic/input/references/fasta_files/b_uni_plasmid.fa \
+    --annotation_files ANNOgesic/input/references/annotations/b_uni_genome.gff ANNOgesic/input/references/annotations/b_uni_plasmid.gff\
+    --tex_notex_libs $TEX_LIBS \
+    --condition_names lag exp stat met dmso \
+    --validate_gene \
+    --program TSS \
+    --replicate_tex all_1 \
+    --curated_sequence_length contig_4:4688977 contig_2:22713\
+    --project_path ANNOgesic
+
+singularity exec -B $STORAGE_PATH annogesic.img annogesic tss_ps \
+    --fasta_files ANNOgesic/input/references/fasta_files/b_uni_genome.fa ANNOgesic/input/references/fasta_files/b_uni_plasmid.fa \
+    --annotation_files ANNOgesic/input/references/annotations/b_uni_genome.gff ANNOgesic/input/references/annotations/b_uni_plasmid.gff\
+    --tex_notex_libs $TEX_LIBS \
+    --condition_names lag exp stat met dmso \
+    --validate_gene \
+    --program PS \
+    --replicate_tex all_1 \
+    --curated_sequence_length contig_4:4688977 contig_2:22713\
+    --project_path ANNOgesic
+
+singularity exec -B $STORAGE_PATH annogesic.img annogesic transcript \
+    --annotation_files ANNOgesic/input/references/annotations/b_uni_genome.gff ANNOgesic/input/references/annotations/b_uni_plasmid.gff\
+    --tex_notex_libs $TEX_LIBS \
+    --replicate_tex all_1 \
+    --compare_feature_genome gene CDS \
+    --tss_files  ANNOgesic/output/TSSs/gffs/b_uni_genome_TSS.gff  ANNOgesic/output/TSSs/gffs/b_uni_plasmid_TSS.gff\
+    --project_path ANNOgesic
+
+singularity exec -B $STORAGE_PATH annogesic.img annogesic terminator \
+    --fasta_files ANNOgesic/input/references/fasta_files/b_uni_genome.fa ANNOgesic/input/references/fasta_files/b_uni_plasmid.fa \
+    --annotation_files ANNOgesic/input/references/annotations/b_uni_genome.gff ANNOgesic/input/references/annotations/b_uni_plasmid.gff\
+    --transcript_files ANNOgesic/output/transcripts/gffs/b_uni_genome_transcript.gff ANNOgesic/output/transcripts/gffs/b_uni_plasmid_transcript.gff \
+    --tex_notex_libs $TEX_LIBS \
+    --replicate_tex all_1 \
+    --project_path ANNOgesic
+
+singularity exec -B $STORAGE_PATH annogesic.img annogesic utr \
+    --annotation_files ANNOgesic/input/references/annotations/b_uni_genome.gff ANNOgesic/input/references/annotations/b_uni_plasmid.gff\
+    --tss_files  ANNOgesic/output/TSSs/gffs/b_uni_genome_TSS.gff  ANNOgesic/output/TSSs/gffs/b_uni_plasmid_TSS.gff\
+    --transcript_files ANNOgesic/output/transcripts/gffs/b_uni_genome_transcript.gff ANNOgesic/output/transcripts/gffs/b_uni_plasmid_transcript.gff \
+    --terminator_files ANNOgesic/output/terminators/gffs/best_candidates/b_uni_genome_term.gff ANNOgesic/output/terminators/gffs/best_candidates/b_uni_plasmid_term.gff \
+    --project_path ANNOgesic
+
+singularity exec -B $STORAGE_PATH annogesic.img annogesic operon \
+    --annotation_files ANNOgesic/input/references/annotations/b_uni_genome.gff ANNOgesic/input/references/annotations/b_uni_plasmid.gff\
+    --tss_files  ANNOgesic/output/TSSs/gffs/b_uni_genome_TSS.gff  ANNOgesic/output/TSSs/gffs/b_uni_plasmid_TSS.gff\
+    --transcript_files ANNOgesic/output/transcripts/gffs/b_uni_genome_transcript.gff ANNOgesic/output/transcripts/gffs/b_uni_plasmid_transcript.gff \
+    --terminator_files ANNOgesic/output/terminators/gffs/best_candidates/b_uni_genome_term.gff ANNOgesic/output/terminators/gffs/best_candidates/b_uni_plasmid_term.gff \
+    --project_path ANNOgesic
+
+singularity exec -B $STORAGE_PATH annogesic.img annogesic promoter \
+    --tss_files  ANNOgesic/output/TSSs/gffs/b_uni_genome_TSS.gff  ANNOgesic/output/TSSs/gffs/b_uni_plasmid_TSS.gff\
+    --fasta_files ANNOgesic/input/references/fasta_files/b_uni_genome.fa ANNOgesic/input/references/fasta_files/b_uni_plasmid.fa \
+    --motif_width 45 2-10 \
+    --project_path ANNOgesic
+
+wget -cP ANNOgesic/input/databases/ https://raw.githubusercontent.com/Sung-Huan/ANNOgesic/master/database/sRNA_database_BSRD.fa
+wget -cP ANNOgesic/input/databases/ ftp://ftp.ncbi.nih.gov/blast/db/FASTA/nr.gz
+gunzip ANNOgesic/input/databases/nr.gz
+mv ANNOgesic/input/databases/nr ANNOgesic/input/databases/nr.fa
+
+singularity exec -B $STORAGE_PATH annogesic.img annogesic srna \
+    --filter_info tss blast_srna sec_str blast_nr \
+    --annotation_files ANNOgesic/input/references/annotations/b_uni_genome.gff ANNOgesic/input/references/annotations/b_uni_plasmid.gff\
+    --tss_files  ANNOgesic/output/TSSs/gffs/b_uni_genome_TSS.gff  ANNOgesic/output/TSSs/gffs/b_uni_plasmid_TSS.gff\
+    --processing_site_files ANNOgesic/output/processing_sites/gffs/b_uni_genome_processing.gff  ANNOgesic/output/processing_sites/gffs/b_uni_plasmid_processing.gff\
+    --transcript_files ANNOgesic/output/transcripts/gffs/b_uni_genome_transcript.gff ANNOgesic/output/transcripts/gffs/b_uni_plasmid_transcript.gff \
+    --fasta_files ANNOgesic/input/references/fasta_files/b_uni_genome.fa ANNOgesic/input/references/fasta_files/b_uni_plasmid.fa \
+    --terminator_files ANNOgesic/output/terminators/gffs/best_candidates/b_uni_genome_term.gff ANNOgesic/output/terminators/gffs/best_candidates/b_uni_plasmid_term.gff \
+    --promoter_tables ANNOgesic/output/promoters/b_uni_genome/MEME/promoter_motifs_b_uni_genome_allgenome_all_types_45_nt/meme.csv ANNOgesic/output/promoters/b_uni_plasmid/MEME/promoter_motifs_b_uni_plasmid_allgenome_all_types_45_nt/meme.csv\
+    --promoter_names MOTIF_1 \
+    --mountain_plot \
+    --utr_derived_srna \
+    --compute_sec_structures \
+    --srna_format \
+    --nr_format \
+    --nr_database_path ANNOgesic/input/databases/nr.fa \
+    --srna_database_path ANNOgesic/input/databases/sRNA_database_BSRD.fa \
+    --tex_notex_libs $TEX_LIBS \
+    --replicate_tex all_1 \
+    --project_path ANNOgesic
+
+singularity exec -B $STORAGE_PATH annogesic.img annogesic sorf \
+    --annotation_files ANNOgesic/input/references/annotations/b_uni_genome.gff ANNOgesic/input/references/annotations/b_uni_plasmid.gff\
+    --tss_files  ANNOgesic/output/TSSs/gffs/b_uni_genome_TSS.gff  ANNOgesic/output/TSSs/gffs/b_uni_plasmid_TSS.gff\
+    --transcript_files ANNOgesic/output/transcripts/gffs/b_uni_genome_transcript.gff ANNOgesic/output/transcripts/gffs/b_uni_plasmid_transcript.gff \
+    --fasta_files ANNOgesic/input/references/fasta_files/b_uni_genome.fa ANNOgesic/input/references/fasta_files/b_uni_plasmid.fa \
+    --srna_files ANNOgesic/output/sRNAs/gffs/best_candidates/b_uni_genome_sRNA.gff ANNOgesic/output/sRNAs/gffs/best_candidates/b_uni_plasmid_sRNA.gff \
+    --tex_notex_libs $TEX_LIBS \
+    --replicate_tex all_1 -u \
+    --project_path ANNOgesic
+
+singularity exec -B $STORAGE_PATH annogesic.img annogesic srna_target \
+    --annotation_files ANNOgesic/input/references/annotations/b_uni_genome.gff \
+    --fasta_files ANNOgesic/input/references/fasta_files/b_uni_genome.fa \
+    --srna_files ANNOgesic/output/sRNAs/gffs/best_candidates/b_uni_genome_sRNA.gff \
+    --query_srnas all \
+    --mode_intarna H \
+    --program RNAup IntaRNA RNAplex \
+    --project_path ANNOgesic
+-----------------------------------------------------------
+READ_FILES=ANNOgesic/input/reads/Cexpphase10_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Clagphase2TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Cstaphase14_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/EDMSO20TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Cexpphase10TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Clagphase3_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Cstaphase14TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/EMet21_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Cexpphase6_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Clagphase3TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Cstaphase15_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/EMet21TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Cexpphase6TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Clagphase4_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Cstaphase15TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/EMet22_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Cexpphase7_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Clagphase4TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/EDMSO16_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/EMet22TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Cexpphase7TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Clagphase5_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/EDMSO16TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/EMet23_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Cexpphase8_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Clagphase5TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/EDMSO17_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/EMet23TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Cexpphase8TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Cstaphase11_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/EDMSO17TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/EMet24_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Cexpphase9_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Cstaphase11TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/EDMSO18_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/EMet24TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Cexpphase9TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Cstaphase12_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/EDMSO18TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/EMet25_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Clagphase1_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Cstaphase12TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/EDMSO19_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/EMet25TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Clagphase1TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Cstaphase13_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/EDMSO19TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Clagphase2_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/Cstaphase13TEX_sequence.txt.gz_trimmed.fq.fasta,ANNOgesic/input/reads/EDMSO20_sequence.txt.gz_trimmed.fq.fasta
+
+
+# >5 DAYS!Dropped
+singularity exec -B $STORAGE_PATH annogesic.img annogesic circrna \
+    --fasta_files ANNOgesic/input/references/fasta_files/b_uni_genome.fa ANNOgesic/input/references/fasta_files/b_uni_plasmid.fa \
+    --parallels 30 \
+    --annotation_files ANNOgesic/input/references/annotations/b_uni_genome.gff ANNOgesic/input/references/annotations/b_uni_plasmid.gff\
+    --read_files all_samples:$READ_FILES \
+    --project_path ANNOgesic
+
+wget -cP ANNOgesic/input/databases http://www.geneontology.org/ontology/subsets/goslim_generic.obo
+wget -cP ANNOgesic/input/databases http://geneontology.org/ontology/go.obo
+wget -cP ANNOgesic/input/databases ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/idmapping/idmapping_selected.tab.gz
+gunzip ANNOgesic/input/databases/idmapping_selected.tab.gz
+
+singularity exec -B $STORAGE_PATH annogesic.img annogesic go_term \
+    --annotation_files ANNOgesic/input/references/annotations/b_uni_genome.gff ANNOgesic/input/references/annotations/b_uni_plasmid.gff \
+    --transcript_files ANNOgesic/output/transcripts/gffs/b_uni_genome_transcript.gff ANNOgesic/output/transcripts/gffs/b_uni_plasmid_transcript.gff\
+    --go_obo ANNOgesic/input/databases/go.obo \
+    --goslim_obo ANNOgesic/input/databases/goslim_generic.obo \
+    --uniprot_id ANNOgesic/input/databases/idmapping_selected.tab \
+    --project_path ANNOgesic
+
+wget -cP ANNOgesic/input/riboswitch_ID_file/ https://raw.githubusercontent.com/Sung-Huan/ANNOgesic/master/database/Rfam_riboswitch_ID.csv
+wget -cP ANNOgesic/input/RNA_thermometer_ID_file/ https://raw.githubusercontent.com/Sung-Huan/ANNOgesic/master/database/Rfam_RNA_thermometer_ID.csv
+wget -cP ANNOgesic/input/databases ftp://ftp.ebi.ac.uk/pub/databases/Rfam/14.8/Rfam.tar.gz
+wget -cP ANNOgesic/input/databases ftp://ftp.ebi.ac.uk/pub/databases/Rfam/12.0/Rfam.tar.gz
+cd ANNOgesic/input/databases
+tar -zxvf Rfam.tar.gz
+rm Rfam.tar.gz
+cd ../../../
+
+singularity exec -B $STORAGE_PATH annogesic.img annogesic riboswitch_thermometer \
+    --annotation_files ANNOgesic/input/references/annotations/b_uni_genome.gff ANNOgesic/input/references/annotations/b_uni_plasmid.gff \
+    --fasta_files ANNOgesic/input/references/fasta_files/b_uni_genome.fa ANNOgesic/input/references/fasta_files/b_uni_plasmid.fa \
+    --riboswitch_id_file ANNOgesic/input/riboswitch_ID_file/Rfam_riboswitch_ID.csv \
+    --rna_thermometer_id_file ANNOgesic/input/RNA_thermometer_ID_file/Rfam_RNA_thermometer_ID.csv \
+    --rfam_path ANNOgesic/input/databases/CMs/Rfam.cm \
+    --transcript_files ANNOgesic/output/transcripts/gffs/b_uni_genome_transcript.gff ANNOgesic/output/transcripts/gffs/b_uni_plasmid_transcript.gff \
+    --tss_files  ANNOgesic/output/TSSs/gffs/b_uni_genome_TSS.gff  ANNOgesic/output/TSSs/gffs/b_uni_plasmid_TSS.gff \
+    --project_path ANNOgesic
+
+singularity exec -B $STORAGE_PATH annogesic.img annogesic crispr \
+   --annotation_files ANNOgesic/input/references/annotations/b_uni_genome.gff ANNOgesic/input/references/annotations/b_uni_plasmid.gff \
+   --fasta_files ANNOgesic/input/references/fasta_files/b_uni_genome.fa ANNOgesic/input/references/fasta_files/b_uni_plasmid.fa \
+   --project_path ANNOgesic
+
+#### merging all features into 1 gff
+
+ALL_FEATURES="ANNOgesic/output/TSSs/gffs/b_uni_genome_TSS.gff \
+              ANNOgesic/input/references/annotations/b_uni_genome.gff \
+              ANNOgesic/output/UTRs/5UTRs/gffs/b_uni_genome_5UTR.gff \
+              ANNOgesic/output/UTRs/3UTRs/gffs/b_uni_genome_3UTR.gff \
+              ANNOgesic/output/terminators/gffs/best_candidates/b_uni_genome_term.gff \
+              ANNOgesic/output/processing_sites/gffs/b_uni_genome_processing.gff \
+              ANNOgesic/output/sRNAs/gffs/best_candidates/b_uni_genome_sRNA.gff \
+              ANNOgesic/output/sORFs/gffs/best_candidates/b_uni_genome_sORF.gff \
+              ANNOgesic/output/riboswitches/gffs/b_uni_genome_riboswitch.gff \
+              ANNOgesic/output/RNA_thermometers/gffs/b_uni_genome_RNA_thermometer.gff \
+              ANNOgesic/output/crisprs/gffs/best_candidates/b_uni_genome_CRISPR.gff"
+
+singularity exec -B $STORAGE_PATH annogesic.img annogesic merge_features \
+   --transcript_file ANNOgesic/output/transcripts/gffs/b_uni_genome_transcript.gff \
+   --other_features_files $ALL_FEATURES \
+   --output_prefix genome_b_uni \
+   --source_for_overlapping RefSeq \
+   --project_path ANNOgesic
+
+
+
+
